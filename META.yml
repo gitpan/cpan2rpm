@@ -1,6 +1,6 @@
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         cpan2rpm
-version:      2.017
+version:      2.018
 version_from: cpan2rpm
 installdirs:  site
 requires:

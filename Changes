@@ -1,5 +1,8 @@
 Revision history for cpan2rpm
 
+2.018  2003/05/01 23:00:00
+- RPM cpan2rpm.spec compatibility workaround for borked ExtUtils::MakeMaker 6.03.
+
 2.017  2003/05/01 01:00:00
 - More warn cleaning.
 - Added --define option.

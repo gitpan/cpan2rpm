@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.017";
+$VERSION = "2.018";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -38,6 +38,9 @@ END {
     return print("$VERSION\n") if $VX;
     print "-- Done --\n";
     }
+
+# Stub routine required to prevent destruction of fresh Makefile
+sub MM::flush {}
 
 sub init {
     $|++;    # good for system()
@@ -361,11 +364,11 @@ sub get_meta {
     # grab parameters to WriteMakefile()
     *ExtUtils::MakeMaker::realWriteMakefile = \&ExtUtils::MakeMaker::WriteMakefile;
     *ExtUtils::MakeMaker::WriteMakefile = sub {
-      die "SAFETY ABORT!" if $ENV{_DEEP_RECURSION}++ > 10;
-      %meta = @_;
-      *ExtUtils::MakeMaker::WriteMakefile = \&ExtUtils::MakeMaker::realWriteMakefile;
-      goto &ExtUtils::MakeMaker::WriteMakefile;
-    };
+        die "SAFETY ABORT!" if $ENV{_DEEP_RECURSION}++ > 10;
+        %meta = @_;
+        *ExtUtils::MakeMaker::WriteMakefile = \&ExtUtils::MakeMaker::realWriteMakefile;
+        goto &ExtUtils::MakeMaker::WriteMakefile;
+        };
     local @ARGV = ();
     push @ARGV, $info{"make-maker"} if $info{"make-maker"};
     # no input or output
@@ -924,7 +927,7 @@ sub searchcpan {
 
     my $cache = "$RPMDIR{SOURCES}/$dist";
     if (!$info{force} and my $url = readlink($cache)) {
-        print "Using cached URL\n";
+        print "Using cached URL: $url\n";
         return $url;
         }
 
@@ -1716,6 +1719,6 @@ F<http://sourceforge.net/projects/cpan2rpm/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.215 2003/05/01 05:31:47 bbb Exp $
+$Id: cpan2rpm,v 2.219 2003/05/02 05:28:35 bbb Exp $
 
 =cut

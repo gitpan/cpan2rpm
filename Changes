@@ -1,6 +1,19 @@
 Revision history for cpan2rpm
 
-2.019  06/02/03 16:19:42
+2.020  2003/09/25 18:00:00
+- compatibility fixes for non-root (sudo) --install on RedHat 9 spotted by Allen Bettilyon [allen@about-inc.com].
+- compatibility fixes for ExtUtils::MakeMaker >= 6.15.
+- added the --no-depchk switch to suppress the upfront check for dependent perl modules.
+- fix bug #2835 reported by mariuslj@cpan.org.
+- fix some license issues.
+- reformatted spec output for cleaner look.
+- added arguments used to generate spec file to the spec header.
+- added support for the standard ftp client as a last resort.
+- added code to specfile to make packages relocatable. Patch by Willis Brandon [Brandon.Willis@acxiom.com].
+- added display of specfile path written to in --spec-only case.
+- added notes to README about configuring wget for passive ftp use.
+
+2.019  2003/06/02 16:19:42
 - fixed broken logic with the perl.req.patch.
   Thanks to Ian Burrell <ib@onsitetech.com> for pointing out the problem.
 - added code to properly evaluate paths found in .rpmmacros which may include

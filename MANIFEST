@@ -1,6 +1,7 @@
 README
 README.redhat6
 MANIFEST
+LICENSE
 Makefile.PL
 Changes
 cpan2rpm

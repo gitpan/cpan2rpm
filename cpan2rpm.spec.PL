@@ -13,6 +13,7 @@ my @cmd = (
     "--no-prfx",
     "--buildarch=noarch",
     "--doc", "perl.req.patch",
+    "--license", "Gnu Public License (GPL)",
     "."
     );
 

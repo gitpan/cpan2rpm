@@ -1,5 +1,10 @@
 Revision history for cpan2rpm
 
+2.014 2003/02/25 18:38:14
+- added package signature support with --sign-setup and --no-sign
+- eliminated tempfile checks when only setting stuff up: rpm-dirs or signatures
+- POD fixes for numbered listings
+
 2.013  2003/02/20 20:54:21
 - Allow --upgrade to work without specifying a module.
 - fixed bug with --no-requires about a hash dereference on a string under strict

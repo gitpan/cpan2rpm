@@ -12,7 +12,7 @@ Install this package if you want to create RPMs out of Perl modules.
 cpan2rpm is distributed in RPM format.  To install: download the file
 and issue the following command:
 
-	rpm -Uvh cpan2rpm-x.xx-x.i386.rpm
+	rpm -Uvh cpan2rpm-x.xx-x.noarch.rpm
 
 Alternatively you can supply rpm with a url, like this:
 
@@ -40,7 +40,7 @@ can also bootstrap it like this (thanks to Jim Radford for this suggestion):
 	./cpan2rpm  HTTP::Lite
 	rpm -Uvh .../HTTP-Lite-<version-release.arch>.rpm
 	./cpan2rpm cpan2rpm-1.49.tar.gz
-	rpm -Uvh .../cpan2rpm-1.49-1.i386.rpm
+	rpm -Uvh .../cpan2rpm-1.49-1.noarch.rpm
 
 2) To fix a problem with the rpm-build dependency generator, we've
 included the file perl.req.patch which may need be applied as root.
@@ -80,4 +80,4 @@ wishlist, please visit:
 
 http://rt.cpan.org/NoAuth/Bugs.html?Dist=cpan2rpm
 
-$Id: README,v 2.8 2003/02/08 23:19:16 bbb Exp $
+$Id: README,v 2.9 2003/02/23 11:44:35 ekkis Exp $

@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.013";
+$VERSION = "2.014";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -88,7 +88,7 @@ sub init {
         # -- section options
         "prologue=s"       => "inserts text at beginning of section",
         "epilogue=s"       => "inserts text at end of section",
-        # -- section options
+        # -- build options
         "spec-only"        => "only generates spec file",
         "spec=s"           => "specifies the name of a spec file",
         "make-maker=s"     => "arguments for makefile creation",
@@ -101,10 +101,12 @@ sub init {
         "req-scan-all"     => "scan all files in a tarball for reqs",
         "no-clean"         => "suppress --clean",
         "shadow-pure"      => "override existing pure perl module",
+        "no-sign"          => "prevents signing the package",
         "install|i"        => "install package when done",
         "force"            => "forces all operations",
         # -- miscellaneous options
         "mk-rpm-dirs=s"    => "creates RPM dirs for non-root users",
+        "sign-setup:s"     => "sets up RPM to support signatures",
         "upgrade"          => "upgrades cpan2rpm",
         "no-upgrade-chk|U" => "no version checks",
         "debug:i"          => "produce debugging output",
@@ -136,23 +138,7 @@ sub init {
 
     %info = (%info, %opts);
 
-    #   handle temporary files
-
-    if ($TMPDIR = $info{tempdir}) {
-        mkdir $TMPDIR, 0755 unless -d $TMPDIR;
-        }
-    else {
-        my $msg = "Cannot run without File::Temp, please install ";
-        $msg .= "or use the --tempdir option.";
-        eval "use File::Temp qw/tempdir tempfile/";
-        die "$@\n$msg\n" if $@;
-
-        $Temp = 1;
-        $info{dist} ||= "";
-        $TMPDIR = tempdir(
-            CLEANUP => $info{"no-clean"} || -d $info{dist} ? 0 : 1
-            );
-        };
+    print "DEBUG=ON\n" if $info{debug};
 
     #   set up local account to build packages
 
@@ -180,10 +166,79 @@ sub init {
 
         print "RPM user environment set up.  Your system should be ";
         print "ready for packaging!\n";
-        exit(0);
+        exit;
         }
 
+    if (defined $info{"sign-setup"}) {
+        my $msg = "Incorrectly formatted argument.  ";
+        $msg .=  "Do not pass a module name with this option!\nStopped";
+        die $msg unless $info{"sign-setup"} =~ /(^(gpg|pgp):)|^\s*$/i;
+
+        my $mac = "$ENV{HOME}/.rpmmacros"; local $_ = $mac;
+        die "Cannot read use macros file" unless -r;
+
+        readfile();
+        die "Package signing already set up.\n"
+            . "Please edit macros file manually at $mac\n"
+            . "Stopped"
+            if /%_signature/i;
+
+        # make sure gpg's there
+        my $gpg = getrpm_macdef("_gpg");
+        $gpg = inpath("gpg") unless -e $gpg;
+        $gpg = inpath("pgp") unless -e $gpg;
+        die "Neither GPG nor PGP found in PATH.  Stopped"
+            unless -e $gpg;
+        die "$gpg is not executable!  Stopped" unless -x $gpg;
+        
+        my $gpg_path = getrpm_macdef("_gpg_path");
+        $gpg_path = "$ENV{HOME}/.gnupg" if $gpg_path eq '%{_gpg_path}';
+        my ($type, $usr) = split ":", $info{"sign-setup"};
+        $type ||= "gpg";
+
+        my $key = gpgkey();
+        $msg = "No keypairs available on your keyring!  Run:\n";
+        $msg .= "\n\t# gpg --gen-key\n";
+        $msg .= "\nStopped";
+        die $msg unless $key;
+
+        $usr ||= $key;
+
+        my @gpg = ("%_signature $type");
+        push @gpg, "%_gpg $gpg";
+        push @gpg, "%_gpg_path $gpg_path";
+        push @gpg, "%_gpg_name $usr";
+
+        writefile($mac, join($/, "", @gpg, ""), ">>");
+        print "Package signing macros set up.\nPlease review $mac\n";
+        exit;
+        }
+
+    #   handle temporary files
+
+    if ($TMPDIR = $info{tempdir}) {
+        mkdir $TMPDIR, 0755 unless -d $TMPDIR;
+        }
+    else {
+        my $msg = "Cannot run without File::Temp, please install ";
+        $msg .= "or use the --tempdir option.";
+        eval "use File::Temp qw/tempdir tempfile/";
+        die "$@\n$msg\n" if $@;
+
+        $Temp = 1;
+        $info{dist} ||= "";
+        $TMPDIR = tempdir(
+            CLEANUP => $info{"no-clean"} || -d $info{dist} ? 0 : 1
+            );
+        };
+
     upgrade() if defined $info{upgrade};
+
+    unless ($info{"no-sign"}) {
+        my $sig = getrpm_macdef("_signature");
+        $sig =~ s/none//i;
+        $sig && ($info{sign} = "--sign") || print "Signatures not set up\n";
+        }
 
     $info{dist} = shift @ARGV
         || syntax(\%desc, "No distribution specified!");
@@ -322,7 +377,11 @@ sub get_meta {
     my @deps;
     my $deps = $meta{PREREQ_PM};
     for (keys %$deps) {
-        $@ = ""; eval "use $_ $deps->{$_}";
+        my $use = "use $_";
+        $use .= " $deps->{$_}" if $deps->{$_};
+
+        $@ = ""; eval $use;
+
         push @deps, "$_ >= $deps->{$_}" if $@; 
         }
     my $msg = "Unable to build module, the following dependencies have failed:";
@@ -800,15 +859,17 @@ sub mk_rpm {
     my $ret = 0;
     print "Generating package\n";
 
-    system($RPM, "-bp",  $info{spec});
+    system("$RPM -bp  $info{spec} > /dev/null 2>&1");
     warn("RPM test unpacking failed!") if $ret = $? >> 8;
 
     if ($ret == 0) {
-        my @cmd = ($RPM, '-ba', '--clean', $info{spec});
-        splice @cmd, 2, 1 if $info{"no-clean"};
+        my @cmd = ($RPM, '-ba');
+        push @cmd, "--clean" unless $info{"no-clean"};
+        push @cmd, $info{sign} if $info{sign};
+        push @cmd, $info{spec};
         print join " ", ">>", @cmd, "\n" if defined $info{debug};
         system(@cmd);
-        die "RPM build failed!" if $ret = $? >> 8;
+        die "RPM build failed [$ret]" if $ret = $? >> 8;
         }
 
     return $ret;
@@ -839,7 +900,11 @@ sub inst_rpm {
 sub searchcpan {
     my $dist = shift || $info{dist};
 
-    # Abort unless it smells like a CPAN module
+    # don't process tarballs
+    return if $dist =~ $tarRE;
+    # or directories
+    return if -d $dist;
+    # abort unless it smells like a CPAN module
     return unless $dist =~ /^[\w:\-.]+$/;
 
     my $cache = "$RPMDIR{SOURCES}/$dist";
@@ -977,18 +1042,21 @@ sub untar($) {
 # --- file handling functions -------------------------------------------------
 
 #
-#    returns the contents of a given file or undef if the
-#    file does not exist
+#   returns the contents of a given file or undef if the
+#   file does not exist.  if no filename is passed $_ is used.
+#   when called in void context, sets $_
 #
 
 sub readfile {
-    local $_ = shift || $_;
-    return undef unless -r;
+    my $f = shift || $_;
+    local $_ if defined wantarray();
+
+    return $_ = undef unless -r $f;
 
     local $/ = undef;
-    open(_) || die "$! [$_].  Stopped ";
-    $_ = <_>;
-    close(_);
+    open(F, $f) || die "$! [$f].  Stopped ";
+    $_ = <F>;
+    close(F);
     $_;
     }
 
@@ -1004,7 +1072,7 @@ sub writefile($@) {
     open (FILE, "$op $fn") || die "writefile('$fn'): $!. Stopped";
     binmode(FILE);
     print FILE;
-    close(FILE);
+    close FILE || die "writefile('$fn'): $!. Stopped";
     $fn;
     }
 
@@ -1130,6 +1198,14 @@ sub std_restore {
     }
 
 # --- miscellany --------------------------------------------------------------
+
+sub gpgkey {
+    for (qx|gpg --list-keys 2> /dev/null|) {
+        next unless /^pub/;
+        my ($id) = m|/([A-Z0-9]+)\s|;
+        return $id;
+        }
+    }
 
 sub optagg {
     my $nm = shift || $_;
@@ -1264,13 +1340,13 @@ The syntax for cpan2rpm requires a single I<distribution> name, which can take o
 
 =over
 
-=item B<1) a CPAN module name> (e.g. XML::Simple) - When a module name is passed, the script will "walk" search.cpan.org to determine the latest distribution.  If an exact match is not found, the CPAN module is used to make this determination.  If you have not yet configured this module, please refer to the REQUIREMENTS section below for further instructions.
+=item 1. B<a CPAN module name> (e.g. XML::Simple) - When a module name is passed, the script will "walk" search.cpan.org to determine the latest distribution.  If an exact match is not found, the CPAN module is used to make this determination.  If you have not yet configured this module, please refer to the REQUIREMENTS section below for further instructions.
 
-=item B<2) a URL> (both F<http://> and F<ftp://> style locators will work) - In this and the above case, an automatic download of the needed tarball is performed (see notes for how).  The tarball is deposited in the SOURCES directory.
+=item 2. B<a URL> (both F<http://> and F<ftp://> style locators will work) - In this and the above case, an automatic download of the needed tarball is performed (see notes for how).  The tarball is deposited in the SOURCES directory.
 
-=item B<3) a path to a tarball> (e.g. F</tmp/XML-Simple-1.05.tar.gz>) - In this case, the tarball indicated gets copied to the SOURCES directory.
+=item 3. B<a path to a tarball> (e.g. F</tmp/XML-Simple-1.05.tar.gz>) - In this case, the tarball indicated gets copied to the SOURCES directory.
 
-=item B<4) a directory path> - The directory specified must contain a F<Makefile.PL>.  If the user intends to build a package from a directory (i.e. user does NOT specify B<--spec-only>), the commands:
+=item 4. B<a directory path> - The directory specified must contain a F<Makefile.PL>.  If the user intends to build a package from a directory (i.e. user does NOT specify B<--spec-only>), the commands:
 
 =back
 
@@ -1301,7 +1377,6 @@ These represent all tags which get inserted in the package with single values.  
 =over
 
 =item B<--name=C<string-value>>
-
 This option corresponds to the I<Name> tag in the spec file.  As is customary with Perl RPMs, the string C<perl-> will be prepended to any value passed here.  If no value is supplied, the script will use the NAME field found in the module's Makefile.PL
 
 =item B<--no-prfx>
@@ -1481,6 +1556,10 @@ User may be required to use --force (see below) in conjuction with this option t
 
 By default the script will do as little work as possible i.e. if it has already previously retrieved a module from CPAN, it will not retrieve it again.  If it has already generated a spec file it will not generate it again.  This option allows the packager to force all actions, starting from scratch.
 
+=item B<--no-sign>
+
+Suppresses package signatures.  By default, cpan2rpm will sign the packages it generates IF the the RPM macros file has been configured to use signatures - this option prevents this behaviour.  See also the I<--sign-setup> option below.
+
 =item B<--install>
 
 Install the RPM after building it.  If non-root user, you must have "sudo rpm" privileges to use this option.
@@ -1498,6 +1577,14 @@ The options below perform functions not closely related to the quotidien process
 This option allows the non-root user to easily set up his account for building packages.  The option requires a directory path where the RPMS, SPECS, etc. subdirectories will be created.  These directories will contain the spec files, binaries and the source packages generated.  Additionally the I<%_topdir> macro will be defined in the F<~/.rpmmacros> file.  If this file doesn't exist it will be created, if it does but does not contain a definition for this macro, it will be appended to it.  Suggested value is F<~/redhat> but it's up to user.
 
 Additionally, the script will create architecture directories F<i386>, F<i686> and F<noarch> and allows the user to pass B<--buildarch> to also create a directory for that architecture.
+
+=item B<--sign-setup=[C<type:user>]>
+
+This option sets up your RPM macros file to support the signing of packages.  The option may be passed a value consisting of the signature type to use (currently only B<gpg> and B<pgp> are valid but consult the RPM man pages), a colon, and the user name to sign with.  If no value is passed C<gpg> is used for the signature type and the first key listed in the secure keyring is taken for signing.
+
+B<Note:> unless you know what you're doing, do not pass any arguments to this option!  Also,  make sure not to pass a module name as an argument.
+
+To further tailor your macros file please refer to the I<GPG SIGNATURES> section of the RPM man page.
 
 =item B<--upgrade>
 
@@ -1573,9 +1660,15 @@ The script was inspired by B<cpanflute> which is distributed with the rpm-build 
 
 =head1 SUPPORT/BUGS/TODO
 
-For help and thank you notes, e-mail the author directly.  To review known issues, report a new bug, submit a patch, or add to our wishlist, please visit:
+Thank you notes can be mailed directly to the author :)
 
-F<http://rt.cpan.org/NoAuth/Bugs.html?Dist=cpan2rpm>
+For help, you can subscribe to our mailing list at:
+
+    F<http://lists.sourceforge.net/lists/listinfo/cpan2rpm-general>
+
+or send a message to F<cpan2rpm-general-request@lists.sourceforge.net> with C<help> as the subject header.
+
+Feature requests, bug reports and patch submissions should also be handled through SourceForge.
 
 =head1 AVAILABILITY
 
@@ -1583,10 +1676,18 @@ The latest version of the tarball, RPM and SRPM may always be found at:
 
 F<http://perl.arix.com/>
 
+Additionally, the module is available on CPAN at:
+
+F<http://search.cpan.org/author/ECALDER/cpan2rpm/>
+
+and the project is also hosted on SourceForge at:
+
+F<http://sourceforge.net/projects/cpan2rpm/>
+
 =head1 LICENCE AND COPYRIGHT
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.187 2003/02/21 04:54:06 ekkis Exp $
+$Id: cpan2rpm,v 2.200 2003/02/25 04:18:14 ekkis Exp $
 
 =cut

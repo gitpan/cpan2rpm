@@ -26,7 +26,7 @@ I haven't been able to find a real sudo utility that
 works under the old redhat distro.  So here's a hack:
 
 $ mkdir ~/bin
-$ echo -n '#!/usr/bin/perl\nexec "su","-c","@ARGV";' > ~/bin/sudo
+$ echo -e '#!/usr/bin/perl\nexec "su","-c","@ARGV";' > ~/bin/sudo
 $ chmod 0755 ~/bin/sudo
 
 This isn't as good as the real sudo because you have
@@ -48,6 +48,12 @@ with the old rpm.  You'll need to build it manually.
 There is no rpmbuild command on the older versions.
 Just use the rpm command instead.
 
+$ gtar -zxvf cpan2rpm-*.tar.gz
+$ cd cpan2rpm-*
+$ perl Makefile.PL
+$ make
+$ make test
+$ make dist
 $ rpm -ta cpan2rpm-*.tar.gz
 $ sudo rpm -Uvh ~/redhat/RPMS/noarch/cpan2rpm-*.rpm
 Password: <root_password_instead_of_user_password>
@@ -86,7 +92,7 @@ $ sudo rpm -ql -p ~/redhat/RPMS/i386/perl-podlators-1.25-1.i386.rpm " | xargs -i
 $ sudo rpm --replacefiles -Uvh ~/redhat/RPMS/i386/perl-podlators-1.25-1.i386.rpm
 
 # Test::Harness has a weird author?
-$ cpan2rpm --install --author mschwern@cpan.org --shadow-pure Test::Harness
+$ cpan2rpm --install --shadow-pure Test::Harness
 
 # And finally ExtUtils::MakeMaker
 # Not sure why that one regex test keeps failing.
@@ -98,9 +104,9 @@ It is nice to have a perl module to download the remote URLs on the fly.
 
 cpan2rpm --install HTTP::Lite
 
-It is left as an excise to the reader to install LWP (bloat).
+It is left as an excercise to the reader to install LWP (bloat).
 
 Good luck!
 
 Rob Brown <bbb@cpan.org>
-$Id: README.redhat6,v 1.2 2003/02/11 17:57:41 bbb Exp $
+$Id: README.redhat6,v 1.5 2003/04/26 20:06:18 bbb Exp $

@@ -5,14 +5,14 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.014";
+$VERSION = "2.017";
 
 # --- prologue ----------------------------------------------------------------
 
 use strict;
 use Getopt::Long;
 use Sys::Hostname;
-use ExtUtils::MakeMaker 5.4302;
+use ExtUtils::MakeMaker;
 
 my ($RPM, $TMPDIR, %RPMDIR, $CWD, %info, %meta, $Temp);
 
@@ -85,6 +85,7 @@ sub init {
         "source|s=s@"      => "specifies (multiple) sources to use",
         "patch|p=s@"       => "specifies (multiple) patches to apply",
         "doc=s"            => "adds to the spec's %doc section",
+        "define=s@"        => "define macros",
         # -- section options
         "prologue=s"       => "inserts text at beginning of section",
         "epilogue=s"       => "inserts text at end of section",
@@ -190,7 +191,7 @@ sub init {
         die "Neither GPG nor PGP found in PATH.  Stopped"
             unless -e $gpg;
         die "$gpg is not executable!  Stopped" unless -x $gpg;
-        
+
         my $gpg_path = getrpm_macdef("_gpg_path");
         $gpg_path = "$ENV{HOME}/.gnupg" if $gpg_path eq '%{_gpg_path}';
         my ($type, $usr) = split ":", $info{"sign-setup"};
@@ -266,10 +267,8 @@ sub init {
 
     if ($dirserr) {
         print "RPM user environment - Your account does not have permissions ";
-        print "to the requisite RPM directory structure.  cpan2rpm provides ";
-        print "a simple mechanism for setting up your environment for ";
-        print "non-root package building.  For more information, please refer ";
-        print "to the --mk-rpm-dirs option in the man page\n";
+        print "to the requisite RPM directory structure.  Try 'cpan2rpm --mk-rpm-dirs";
+        print "=~/redhat' to setup your environment for non-root package building.\n";
         exit(1);
         }
 
@@ -360,7 +359,13 @@ sub get_meta {
     {
     local $^W = 0;
     # grab parameters to WriteMakefile()
-    *ExtUtils::MakeMaker::WriteMakefile = sub {%meta = @_};
+    *ExtUtils::MakeMaker::realWriteMakefile = \&ExtUtils::MakeMaker::WriteMakefile;
+    *ExtUtils::MakeMaker::WriteMakefile = sub {
+      die "SAFETY ABORT!" if $ENV{_DEEP_RECURSION}++ > 10;
+      %meta = @_;
+      *ExtUtils::MakeMaker::WriteMakefile = \&ExtUtils::MakeMaker::realWriteMakefile;
+      goto &ExtUtils::MakeMaker::WriteMakefile;
+    };
     local @ARGV = ();
     push @ARGV, $info{"make-maker"} if $info{"make-maker"};
     # no input or output
@@ -380,9 +385,10 @@ sub get_meta {
         my $use = "use $_";
         $use .= " $deps->{$_}" if $deps->{$_};
 
+        local $^W = 0;
         $@ = ""; eval $use;
 
-        push @deps, "$_ >= $deps->{$_}" if $@; 
+        push @deps, "$_ >= $deps->{$_}" if $@;
         }
     my $msg = "Unable to build module, the following dependencies have failed:";
     die "$msg\n  " . join("\n  ", @deps) . "\nStopped" if @deps;
@@ -539,7 +545,15 @@ EOF
     #   handle aggregate options
 
     $info{"$_-list"} = optagg() for @{$info{"opts-agg"}};
-
+    $info{"define-list"} .= "";
+    foreach (@{$info{"define"}}) {
+      if (/^(\w)=(.*)/) {
+          $info{"define-list"} .= "%define $1 $2\n";
+          }
+      else {
+          $info{"define-list"} .= "%define $_\n";
+          }
+      }
     #   section handlers
 
     my $prologue = $info{prologue};
@@ -684,6 +698,7 @@ sub mk_spec {
         %define filelist %{pkgname}-%{version}-filelist
         %define NVR %{pkgname}-%{version}-%{release}
         %define maketest $info{maketest}
+        $info{"define-list"}
 ZZ
 
     $spec .= $info{"no-requires"}{"define"} . $/;
@@ -934,8 +949,9 @@ sub searchcpan {
     print("- $info{dist} not found!\n"), return
         unless $2;
 
-    print "Found: $url\n";
     $url = "$base/$2";
+    print "Found: $url\n";
+    unlink($cache) if -l $cache;
     symlink($url, $cache);
     return $url;
     }
@@ -1183,6 +1199,7 @@ sub write_url {
     }
 
 sub std_close {
+    return if $info{debug};
     open(OLDOUT, ">&STDOUT")   || die "std_save(): $!";
     open(OLDERR, ">&STDERR")   || die "std_save(): $!";
     open(OLDIN,  "<&STDIN")    || die "std_save(): $!";
@@ -1192,6 +1209,7 @@ sub std_close {
     }
 
 sub std_restore {
+    return if $info{debug};
     open(STDOUT, ">&OLDOUT") || die "std_restore(): $!";
     open(STDERR, ">&OLDERR") || die "std_restore(): $!";
     open(STDIN,  "<&OLDIN")  || die "std_restore(): $!";
@@ -1468,6 +1486,16 @@ This option indicates dependencies at build time.
 
 Allows for specifying patch files to be inserted into the spec file and applied when building the source.
 
+=item B<--define=C<name body>>
+
+Works much like the rpm --define syntax to define rpm macro initializations.  A comma-delimited list of macro definitions is not supported, but ut may be used multiple times to define more than one macro.
+
+I<exempli gratia>
+
+  --define="suidperl 1"
+  --define "usethreads 1"
+  --define admindir=/var/www/html/admin
+
 =item B<--doc=C<string-value>>
 
 This option may be used to add values to the I<%doc> line in the spec's I<%files> section.  By default, cpan2rpm examines the contents of a tarball, using a regular expression to pick up files it recognises as belonging to the F</usr/share/doc> directory.  If your module contains files cpan2rpm does not recognise, they may be added with this option.
@@ -1494,7 +1522,7 @@ As with the previous option, this may be used to insert code at the end of a giv
 
 I<exempli gratia>
 
---epilogue="tag:epoch 1"
+--epilogue="tag:epoch: 1"
 
 =back
 
@@ -1688,6 +1716,6 @@ F<http://sourceforge.net/projects/cpan2rpm/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.200 2003/02/25 04:18:14 ekkis Exp $
+$Id: cpan2rpm,v 2.215 2003/05/01 05:31:47 bbb Exp $
 
 =cut

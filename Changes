@@ -1,6 +1,22 @@
 Revision history for cpan2rpm
 
-2.014 2003/02/25 18:38:14
+2.017  2003/05/01 01:00:00
+- More warn cleaning.
+- Added --define option.
+- Backward compatibility fixes for perl 5.00503
+- RPM 3.x compatibility fixes (RedHat 6.x and SuSE).
+
+2.016  2003/04/29 01:00:00
+- bumped up due to corrupted tarball uploaded to CPAN/sf
+
+2.015  2003/04/28 23:36:00
+- Allow --force to refresh the searchcpan cache symlink.
+- Show more useful URL that is found from cpan.
+- Run the real WriteMakefile as well as grab the args. (Authen::PAM)
+- Leave the stdio alone if --debug is on. (Net::FTPServer)
+- A few updates to README.redhat6 steps.
+
+2.014  2003/02/25 18:38:14
 - added package signature support with --sign-setup and --no-sign
 - eliminated tempfile checks when only setting stuff up: rpm-dirs or signatures
 - POD fixes for numbered listings
@@ -67,7 +83,7 @@ normal additive mode
 - add --tempdir option in case File::Temp not yet installed.
 - added -D option to run debugger.
 - silenced eval() to avoid confusing user
-- patches for better SuSE support (thanks to Manfred Winter [mahowi@gmx.net]
+- patches for better SuSE support (thanks to Manfred Winter [mahowi@gmx.net])
 - Support for directory source tree instead of tarball.
 - directory listings are now done from MANIFEST files
 - user now has option to continue or abort when MakeMaker upgrade necessary

@@ -1,15 +1,37 @@
 Revision history for cpan2rpm
 
-2.011 date: 2003/02/11 10:15:05
-- fixed support for filenames in MANIFEST containing characters meaningful to the regular expression engine e.g. c++
+2.012  2003/02/12 04:05:50
+- Add README.redhat6 for special instructions and issues
+pertaining to rh 6.x.
+- Fixed stdio hiding for meta info extraction to avoid spurious
+results under certain conditions (eg. Socket6).
+- Add a cache to reduce hits to search.cpan.org if possible (bug #2066)
+- added --no-upgrade-chk to skip version checking
+- chkupgrade() now times out in 5 seconds
+- redesigned chkupgrade() to perform upgrade decision at server end
+- version chks now also pass module name being built
+- fixed bug with %filelist generation wherein modules containing
+.pm files with the same name as a directory would drop the file e.g.
+    /usr/lib/perl5/site_perl/5.6.0/i386-linux/Event
+    /usr/lib/perl5/site_perl/5.6.0/i386-linux/Event.pm
+- redesigned cpan2rpm.spec.PL, cleaning bug #2058
+
+2.011  2003/02/11 10:15:05
+- fixed support for filenames in MANIFEST containing characters
+meaningful to the regular expression engine e.g. c++
 - now ignores comments in the MANIFEST
-- Bug #2013: Rob replaced the eval() in get_meta() with a do() which fixes problems with Makefile.PLs that do eval()s and generally cleans up the code nicely
+- Bug #2013: Rob replaced the eval() in get_meta() with a do() which
+fixes problems with Makefile.PLs that do eval()s and generally cleans
+up the code nicely
 - renamed option --pkgname to --name and --nopkgprfx --no-prfx
 - added options: --epoch, --buildrequires, --source
 - several options now handle multiple instances
-- made --requires, --provides and other "list" type options aggregatable such that users may pass these multiple times
-- added --prologue and --epilogue for support of inserting arbitrary code to sections of the spec file
-- the --doc option now supports a replacement mode, in addition to the normal additive mode
+- made --requires, --provides and other "list" type options aggregatable
+such that users may pass these multiple times
+- added --prologue and --epilogue for support of inserting arbitrary code
+to sections of the spec file
+- the --doc option now supports a replacement mode, in addition to the
+normal additive mode
 - all doc files now have their shebang fixed
 - removed warning regarding MakeMaker versions
 - added auto-upgrade funtionality (see --upgrade)
@@ -19,7 +41,7 @@ Revision history for cpan2rpm
 - POD rearranged
 - docs now encourage use of CPAN bug tracker
 
-2.010 2003/01/25 04:23:00
+2.010  2003/01/25 04:23:00
 - Slight backward compatibility changes for perl 5.00503
 - improved -V
 - warn cleaning
@@ -46,7 +68,8 @@ Revision history for cpan2rpm
 - Works with ExtUtils::MakeMaker < 5.91 and > 6.05
   (Requires an upgrade for those versions in between.)
 - Add instructions on how to upgrade MakeMaker to README.
-- Our gratitude to Michal Jaegermann for pointing out and helping improve and fix the following issues:
+- Our gratitude to Michal Jaegermann for pointing out and helping improve
+and fix the following issues:
     - Changed the cpan2rpm rpm itself to be "noarch".
     - Convert all system() calls from "single scalar" mode.
     - Remove "Distribution:" from spec unless specified.
@@ -59,12 +82,16 @@ Revision history for cpan2rpm
     - The --spec-only sends contents to --spec setting instead of STDOUT.
       This fixes a problem with modules that write to stdout for configuration
       purposes which previously included that output in the spec file.
-- Our gratitude also to Anthony LaMark for suggesting the following issues whilst attempting to build Apache::SOAP:
+- Our gratitude also to Anthony LaMark for suggesting the following issues
+whilst attempting to build Apache::SOAP:
     - added support for PKZip archives and .bz2s
     - now cleans up ctrl-Ms from Windoze-based distributions
 - More general --buildarch default setting.
-- Added --mk-rpm-dirs option to set up non-root user environments for package building.  This replaces the previous hack which used the ~/redhat directory.
-- Added --doc parameter to allow for additions to the %doc line in the %files section
+- Added --mk-rpm-dirs option to set up non-root user environments for
+package building.  This replaces the previous hack which used the ~/redhat
+directory.
+- Added --doc parameter to allow for additions to the %doc line in the
+%files section
 - reorganised POD to break options into logical groups
 - now creates a more generic spec file
 
@@ -74,7 +101,10 @@ Revision history for cpan2rpm
   Code by Axel.Thimm@physik.fu-berlin.de (Axel Thimm)
 
 2.007  2002/12/17 20:35:48
-- fixed problem with building packages that define neither DISTNAME nor NAME in the call to MakeMaker(), resulting in an unwriteable filename which included a given url.  Thanks to Rainer Lay for pointing this out.  the script broke building the C<Class-MethodMaker> package.
+- fixed problem with building packages that define neither DISTNAME nor
+NAME in the call to MakeMaker(), resulting in an unwriteable filename
+which included a given url.  Thanks to Rainer Lay for pointing this out.
+the script broke building the C<Class-MethodMaker> package.
 - changed all references to $RPM_BUILD_ROOT to the more flexible %{buildroot}
 - style change in opening files from open(F, $f) to open(_)
 
@@ -102,7 +132,10 @@ Revision history for cpan2rpm
   the --ignore-fail-on-non-empty flag.
 
 2.002  2002/11/25 21:18:48  ekkis
-- minor modification to pick up the DISTNAME, from the call to WriteMakefile() in Makefile.PL, whenever available.  thanks to Nick Eggleston, who first noticed this with the MailTools package, for pointing it out.
+- minor modification to pick up the DISTNAME, from the call to
+WriteMakefile() in Makefile.PL, whenever available.  thanks to
+Nick Eggleston, who first noticed this with the MailTools package,
+for pointing it out.
 - added language to man page about support
 
 2.001  2002/11/23 01:54:30

@@ -3,17 +3,18 @@
 
 use strict;
 
-my $req = q{ %([ `rpm -q rpm --qf %%{version}|awk -F . '{print $1}'` -gt 3 ] && echo rpm-build || echo rpm)};
-
-my @cmd
-  =("./cpan2rpm",
-    ((eval("use File::Temp"),$@)?("--tempdir","/tmp/cpan2rpm"):()),
+my $rpmver; ($rpmver = qx/rpm --version/) =~ s/\D+//g;
+my @cmd = (
+    "./cpan2rpm",
+    ((eval("use File::Temp"),$@) ? ("--tempdir","/tmp/cpan2rpm") : ()),
     "--force",
     "--spec-only",
-    "--requires", $req,
+    "--spec", "./cpan2rpm.spec",
+    "--requires", $rpmver >= 400 ? "rpm-build" : "rpm",
     "--no-prfx",
     "--buildarch=noarch",
     "--doc", "perl.req.patch",
-    "--spec", "./cpan2rpm.spec",
-    ".");
+    "."
+    );
+
 exec(@cmd) or die "exec failure: $!";

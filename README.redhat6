@@ -101,3 +101,6 @@ cpan2rpm --install HTTP::Lite
 It is left as an excise to the reader to install LWP (bloat).
 
 Good luck!
+
+Rob Brown <bbb@cpan.org>
+$Id: README.redhat6,v 1.2 2003/02/11 17:57:41 bbb Exp $

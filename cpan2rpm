@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.011";
+$VERSION = "2.012";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -103,6 +103,7 @@ sub init {
         # -- miscellaneous options
         "mk-rpm-dirs=s"    => "creates RPM dirs for non-root users",
         "upgrade"          => "upgrades cpan2rpm",
+        "no-upgrade-chk|U" => "no version checks",
         "debug:i"          => "produce debugging output",
         "help|h"           => "this help screen",
         "V"                => "cpan2rpm version",
@@ -149,10 +150,6 @@ sub init {
             );
         };
 
-    #   deal with newer versions
-
-    defined $info{upgrade} ? upgrade() : chkupgrade();
-
     #   set up local account to build packages
 
     if ($info{"mk-rpm-dirs"}) {
@@ -184,6 +181,10 @@ sub init {
 
     $info{dist} = shift @ARGV
         || syntax(\%desc, "No distribution specified!");
+
+    #   deal with newer versions
+
+    defined $info{upgrade} ? upgrade() : chkupgrade();
 
     $RPMDIR{BUILD} = getrpm_macdef("_builddir");
     $RPMDIR{SOURCES} = getrpm_macdef("_sourcedir");
@@ -342,7 +343,9 @@ sub get_meta {
     if (!$meta{ABSTRACT} && $from) {
         local $_ = $from;
         ($meta{ABSTRACT}) = /=head\d\s+NAME.*?-\s*(.*?)$/ism;
+        $meta{ABSTRACT} ||= "";
         ($meta{DESCRIPTION}) = /=head\d\s+SYNOPSIS\s+(.*?)=head/ism;
+        $meta{DESCRIPTION} ||= "";
         $meta{DESCRIPTION} =~ s/E<lt>/</ig;
         $meta{DESCRIPTION} =~ s/E<gt>/>/ig;
         }
@@ -351,12 +354,15 @@ sub get_meta {
 
     if (!$info{author} && $from =~ /=head\d\s+AUTHORS?\s+(.*?)=/is) {
         local $_ = $1;
-        my ($em) = /(\S+@\S+)/is;
+        my ($em) = /(\S+(@|\sat\s)\S+)/is;
+        $em ||= "";
         $em =~ s/\.$//;             # e.g. Erick Calder e@arix.com.
         ($_) = /((?:\S+\s+){1,3})\Q$em\E/is;
+        $_ ||= "";
         s/[^a-zA-Z ]+//g;           # Peter Behroozi, behroozi@www.pls.uni.edu
         trim(); s/\s+/ /g;
-        $em =~ s/[()]//g;           # Eryq (eryq@zeegee.com)
+        $em =~ s/\s+at\s+/@/g;
+        $em =~ s/[()<>]//g;           # Eryq (eryq@zeegee.com)
         $_ .= " <$em>";
         s/E<(lt|gt)>//ig;           # Erick Calder E<lt>e@arix.comE<gt>
         $info{author} = $_;
@@ -596,12 +602,10 @@ sub mk_spec {
         # For more information please visit: http://perl.arix.com/
         #
 
-        %define     distro() %([ "%_vendor" = "%1" ] && echo 1 || echo 0)
-
-        %define     pkgname $pkgname
-        %define     filelist %{pkgname}-%{version}-filelist
-        %define     NVR %{pkgname}-%{version}-%{release}
-        %define     maketest $info{maketest}
+        %define pkgname $pkgname
+        %define filelist %{pkgname}-%{version}-filelist
+        %define NVR %{pkgname}-%{version}-%{release}
+        %define maketest $info{maketest}
 ZZ
 
     $spec .= $info{"no-requires"}{"define"} . $/;
@@ -712,7 +716,7 @@ ZZ
 
             sub indirs {
                 my \$x = shift;
-                \$x =~ /^\\Q\$_\\E/ && \$x ne \$_ && return 1 for \@dirs;
+                \$x =~ /^\\Q\$_\\E\\// && \$x ne \$_ && return 1 for \@dirs;
                 }
             ' > %filelist
 
@@ -819,6 +823,12 @@ sub searchcpan {
     # Abort unless it smells like a CPAN module
     return unless $dist =~ /^[\w:\-]+$/;
 
+    my $cache = "$RPMDIR{SOURCES}/$dist";
+    if (!$info{force} and my $url = readlink($cache)) {
+        print "Using cached URL $url\n";
+        return $url;
+        }
+
     print "Searching CPAN website\n";
     # XXX - This algorithm may change as the
     # search.cpan.org web site output changes.
@@ -858,6 +868,7 @@ sub searchcpan {
             ) {
             $url = URI->new_abs($2, $response->base)->as_string;
             print "Found URL $url\n";
+            symlink($url, $cache);
             return $url;
             }
         }
@@ -892,7 +903,8 @@ sub get_cpan {
     my $tarball = $f; $tarball =~ s|.*/||;
 
     # bail if tarball already there (unless we're being --force'd)
-    return $tarball if -r "$RPMDIR{SOURCES}/$tarball"
+    return $tarball if -s "$RPMDIR{SOURCES}/$tarball"
+        && -r _
         && ! defined $info{force}
         ;
 
@@ -1014,7 +1026,7 @@ sub isurl {
 
 #    Syntax: tarball = get_url [url]
 
-sub get_url($) {
+sub get_url {
     my $url = shift || $_;
 
     $@ = ""; eval "use HTTP::Request::Common; use LWP::UserAgent;";
@@ -1051,7 +1063,7 @@ sub get_url($) {
     my $msg = "External program download failed";
     die "$msg.  Manual download required.  Stopped";
     }
-  
+
 #    Syntax: tarball = write_url <directory> [url]
 
 sub write_url {
@@ -1062,7 +1074,7 @@ sub write_url {
     return unless $url;
 
     my $tar; ($tar = $url) =~ s|.*/||;
-    return $tar if -r "$d/$tar" && !$info{force};
+    return $tar if -s "$d/$tar" && -r _ && !$info{force};
 
     print "Retrieving URL\n";
     local $_ = get_url($url);
@@ -1073,18 +1085,18 @@ sub write_url {
     }
 
 sub std_close {
-    open(OLDOUT, ">&STDOUT") || die "std_save(): $!";
-    open(OLDERR, ">&STDERR") || die "std_save(): $!";
-    open(OLDIN, ">&STDIN") || die "std_save(): $!";
-    close STDOUT || die "std_close(): $!";
-    close STDERR || die "std_close(): $!";
-    close STDIN || die "std_close(): $!";
+    open(OLDOUT, ">&STDOUT")   || die "std_save(): $!";
+    open(OLDERR, ">&STDERR")   || die "std_save(): $!";
+    open(OLDIN,  "<&STDIN")    || die "std_save(): $!";
+    open(STDOUT, ">/dev/null") || die "std_close(): $!";
+    open(STDERR, ">/dev/null") || die "std_close(): $!";
+    open(STDIN,  "</dev/null") || die "std_close(): $!";
     }
 
 sub std_restore {
     open(STDOUT, ">&OLDOUT") || die "std_restore(): $!";
     open(STDERR, ">&OLDERR") || die "std_restore(): $!";
-    open(STDIN, ">&OLDIN") || die "std_restore(): $!";
+    open(STDIN,  "<&OLDIN")  || die "std_restore(): $!";
     }
 
 # --- miscellany --------------------------------------------------------------
@@ -1110,14 +1122,27 @@ sub inpath($) {
     }
 
 sub chkupgrade {
-    my $v = get_url("http://perl.arix.com/cpan2rpm/?version");
-    return unless $v > $VERSION;
+    return if defined $info{"no-upgrade-chk"};
+
+    my $up = "";
+    eval {
+        alarm(5);
+        $SIG{ALRM} = sub {
+            print "Upgrade check elapsed...\n";
+            die "network too slow";
+            };
+        my $mod = $info{dist}; $mod =~ s|.*/||;
+        local $_ = "http://perl.arix.com/cpan2rpm/?";
+        $_ .= "version=$VERSION&mod=$mod";
+        $up = get_url();
+        };
+    alarm(0);
+    return unless $up eq "Y";
 
     local $\ = $/;
     print "";
     print "* A newer version of this program is now available. To upgrade";
-    print "* use the --upgrade option as shown below (you will need sudo";
-    print "* access to do this).\n";
+    print "* enter the following command: cpan2rpm --upgrade\n";
     }
 
 sub upgrade {
@@ -1448,6 +1473,10 @@ Additionally, the script will create architecture directories F<i386>, F<i686> a
 
 Whenever a new version of this program becomes available, an automatic notification will be issued to the user of this fact.  The user may then choose to upgrade via this option.  The option takes no parameters.
 
+=item B<--no-upgrade-chk|-U>
+
+During version checks, the script will time out within 5 seconds if the F<arix.com> server is unavailable (when working offline or if the server is down).  Should the 5 seconds become annoying, users may pass this option to skip the version check.
+
 =item B<--debug[=n]>
 
 This option produces debugging output.  An optional integer increases the level of verbosity for this output.  If no integer is given, 1 is assumed.
@@ -1486,7 +1515,7 @@ At present, B<cpan2rpm> has been tested and is known to work under the following
 
 =item B<Operating Systems>
 
-The script has been tested with Linux RedHat 6.1, 6.2, 7.0, 7.2, 7.3 and 8.0 and SuSE 8.1.  Rumour has it it's been tested on Solaris as well but I don't know for sure.
+The script has been tested with Linux RedHat 6.1, 6.2, 7.0, 7.2, 7.3 and 8.0 and SuSE 8.1.  Rumour has it it's been tested on Solaris as well but I don't know for sure.  See README.redhat6 for 6.x issues to be aware of.
 
 =item B<Perl>
 
@@ -1528,6 +1557,6 @@ F<http://perl.arix.com/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.145 2003/02/11 10:15:05 ekkis Exp $
+$Id: cpan2rpm,v 2.166 2003/02/12 07:15:33 ekkis Exp $
 
 =cut

@@ -1,7 +1,44 @@
 Revision history for cpan2rpm
 
-2.010
-- Warn cleaning.
+2.011 date: 2003/02/11 10:15:05
+- fixed support for filenames in MANIFEST containing characters meaningful to the regular expression engine e.g. c++
+- now ignores comments in the MANIFEST
+- Bug #2013: Rob replaced the eval() in get_meta() with a do() which fixes problems with Makefile.PLs that do eval()s and generally cleans up the code nicely
+- renamed option --pkgname to --name and --nopkgprfx --no-prfx
+- added options: --epoch, --buildrequires, --source
+- several options now handle multiple instances
+- made --requires, --provides and other "list" type options aggregatable such that users may pass these multiple times
+- added --prologue and --epilogue for support of inserting arbitrary code to sections of the spec file
+- the --doc option now supports a replacement mode, in addition to the normal additive mode
+- all doc files now have their shebang fixed
+- removed warning regarding MakeMaker versions
+- added auto-upgrade funtionality (see --upgrade)
+- enhancements to code that extracts author information from POD
+- enhancements to --mk-rpm-dirs
+- fixed bugs # 2071, 2061, 2054, 2045, 2044, 2013, 2010
+- POD rearranged
+- docs now encourage use of CPAN bug tracker
+
+2.010 2003/01/25 04:23:00
+- Slight backward compatibility changes for perl 5.00503
+- improved -V
+- warn cleaning
+- add --tempdir option in case File::Temp not yet installed.
+- added -D option to run debugger.
+- silenced eval() to avoid confusing user
+- patches for better SuSE support (thanks to Manfred Winter [mahowi@gmx.net]
+- Support for directory source tree instead of tarball.
+- directory listings are now done from MANIFEST files
+- user now has option to continue or abort when MakeMaker upgrade necessary
+- now honours VERSION_FROM in the Makefile.PL
+- reimplemented %doc section generation (now includes subdirs as documentation)
+- fixed %doc detection to avoid duplicate includes.
+- better generalisation of spec file
+- simplified cpan2rpm's own make process
+- improved spec files to late-bind decisions based on MakeMaker version
+- warning and error message enhancements
+- various POD changes and enhancements
+- various code clean-ups (non-functional)
 
 2.009  2003/01/02 13:00:00
 - Backed out the Axel.Thimm code because of perl 5.6.0 problems.

@@ -8,9 +8,11 @@ system "touch -d '1/1/00' cpan2rpm.spec";
 
 WriteMakefile
     NAME => "cpan2rpm",
-    AUTHOR => 'Erick Calder <ecalder@cpan.org>',
     VERSION_FROM => "cpan2rpm",
-    ABSTRACT_FROM => "cpan2rpm",
+    $] < 5.005 ? () : (
+        AUTHOR => 'Erick Calder <ecalder@cpan.org>',
+        ABSTRACT_FROM => "cpan2rpm",
+        ),
     EXE_FILES => [ "cpan2rpm" ],
     PREREQ_PM => { # e.g., Module::Name => 1.1
         'ExtUtils::MakeMaker' => 5.4302,

@@ -51,7 +51,7 @@ The patch may be applied as follows:
 
 3) For dependencies to work the RH requirements script must be
 executable (at the time of this writing rpm-build ships without this
-script in the correct mode).  You can do this with: 
+script in the correct mode).  You can do this with:
 
 	sudo chmod +x /usr/lib/rpm/perl.req
 
@@ -74,8 +74,10 @@ For full documentation see the accompanying man page or refer to
 
 - SUPPORT -
 
-For help, please e-mail ecalder@cpan.org.  To subscribe to an
-announcements mailing list, use the above address with the subject header
-"subscribe" (or "unsubscribe" as the case may be).
+For help and thank you notes, e-mail ecalder@cpan.org.  To review
+known issues, report a new bug, submit a patch, or add to the
+wishlist, please visit:
 
-$Id: README,v 2.6 2002/12/25 01:36:03 bbb Exp $
+http://rt.cpan.org/NoAuth/Bugs.html?Dist=cpan2rpm
+
+$Id: README,v 2.8 2003/02/08 23:19:16 bbb Exp $

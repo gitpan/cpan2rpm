@@ -5,9 +5,7 @@
 #
 
 use vars qw($VERSION);
-BEGIN {
-  $VERSION = (split / /, q$Revision: 1.82 $ )[1];
-}
+$VERSION = 2.004;
 
 # --- prologue ----------------------------------------------------------------
 
@@ -15,6 +13,7 @@ use strict;
 use Getopt::Long;
 use Sys::Hostname;
 use Config;
+use ExtUtils::MakeMaker;
 
 # --- main() ------------------------------------------------------------------
 
@@ -112,7 +111,7 @@ sub init {
               cd ~/redhat ;
               mkdir BUILD RPMS SOURCES SPECS SRPMS ;
               echo %_topdir ~/redhat >> $user_macros ;
-            });
+              });
             }
         if ($info{install}) {
             print "\n-- NON ROOT install requires sudo rpm privileges --\n";
@@ -222,7 +221,7 @@ sub get_meta {
 
     #    figure out package name
 
-    $info{pkgname} ||= $meta{NAME} || $info{module};
+    $info{pkgname} ||= $meta{DISTNAME} || $meta{NAME} || $info{module};
     $info{pkgname} =~ s/::/-/g;
     die "No package name available.  Stopped"
         unless $info{pkgname};
@@ -326,6 +325,13 @@ sub mk_spec {
     $pkgname = "perl-" . $pkgname unless $info{nopkgprfx};
     $info{description} =~ s/\s+$//;
     $info{maketest} = "%{__make} test" unless $info{"make-no-test"};
+    if ($ExtUtils::MakeMaker::VERSION == 6.03) {
+        # Known bug in 6.03: PREFIX=... does not work with "make install" line.
+        $info{"make-maker"} .= ' PREFIX=$RPM_BUILD_ROOT%{_prefix}';
+        }
+    else {
+        $info{"make-install"} .= ' PREFIX=$RPM_BUILD_ROOT%{_prefix}';
+        }
 
     local $_ = <<ZZ;
         #
@@ -373,7 +379,7 @@ sub mk_spec {
 
         %build
         CFLAGS="\$RPM_OPT_FLAGS"
-        %{__perl} Makefile.PL PREFIX=\$RPM_BUILD_ROOT%{_prefix} $info{"make-maker"}
+        %{__perl} Makefile.PL $info{"make-maker"}
         %{__make} $info{"make"}
         $info{maketest}
 
@@ -392,7 +398,7 @@ sub mk_spec {
             -o -name "*.bs"                         \\
             |xargs -i rm -f {}
 
-        find \$RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir --ignore-fail-on-non-empty {} \\;
+        find \$RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir {} \\; 2>/dev/null
 
         %clean
         [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
@@ -1019,9 +1025,11 @@ Erick Calder <ecalder@cpan.org>
 
 The script was inspired by B<cpanflute> which is distributed with the rpm-build package from RedHat.  Many thanks to Robert Brown <bbb@cpan.org> for all his cool tricks, advice and patient support.
 
-=head1 AVAILABILITY
+=head1 AVAILABILITY + SUPPORT
 
-The latest version may always be found at:
+For help, comments or suggestions pleawe e-mail F<cpan2rpm@arix.com>.  To subscribe to an announcements mailing list address a blank message to the above address with subject header "subscribe" (or "unsubscribe" as need dictates).
+
+The latest version of the tarball, RPM and SRPM may always be found at:
 
 F<http://perl.arix.com/>
 
@@ -1029,382 +1037,6 @@ F<http://perl.arix.com/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-=head1 CHANGES
-
-$Log: cpan2rpm,v $
-Revision 1.82  2002/11/20 01:11:15  bbb
-Need binmode file handles to avoid corrupting tarball contents.
-Tested and it finally works with perl 5.8.0 (RedHat 8.0) distro.
-
-Revision 1.81  2002/11/19 23:39:32  bbb
-Move PREFIX=... from "make install" part to "perl Makefile.PL" part
-in order to comply with perl 5.8.0 MakeMaker (RedHat 8.0).
-
-Revision 1.80  2002/11/18 15:39:12  bbb
-Add --ignore-fail-on-non-empty to avoid this spewage:
-
-+ find /var/tmp/perl-Net-DNS-0.31-rob/usr -type d -depth -exec rmdir '{}' ';'
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1/Net/DNS/RR': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1/Net/DNS': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1/Net': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/share/man/man3': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/share/man': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/share': Directory not empty
-rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr': Directory not empty
-
-Fix --make-no-test doc typo.
-
-Revision 1.79  2002/11/16 03:29:44  ekkis
-- added --make-no-test
-- small patch to README
-
-Revision 1.78  2002/11/15 18:31:47  ekkis
-- included rpm-build patch submitted by Hook-BOT
-- added --req-scan-all
-
-Revision 1.77  2002/11/14 02:54:57  ekkis
-minor fix for new find (needed \\; for -exec)
-
-Revision 1.76  2002/11/14 02:26:22  ekkis
-thanks to Axel Thimm (Axel.Thimm@physik.fu-berlin.de) for the following suggestions:
-- added --no-clean
-- generalised calls to make, perl and other external programs with %{__make} macros, etc.
-- replaced find call to require fewer external program dependencies
-
-Revision 1.75  2002/11/08 20:24:06  bbb
-Should "make test" too.
-Maybe there should be an option to skip the "make test"?
-
-Revision 1.74  2002/11/08 19:48:45  bbb
-If libwww-perl is not installed,
-show helpful warning,
-then try some external programs:
-wget, lynx, links, ncftpget
-in that order.
-And fix compile error from last commit.  :-)
-
-Revision 1.73  2002/11/08 18:12:45  bbb
-sudo success notification also.
-
-Revision 1.72  2002/11/08 17:52:45  bbb
-Explain how to configure sudo if needed.
-
-Revision 1.71  2002/11/07 23:21:25  ekkis
-wiped TODO since Rob knocked it out
-
-Revision 1.70  2002/11/07 02:58:13  bbb
-Better sudo error.
-
-Revision 1.69  2002/11/07 02:40:31  bbb
-Add sudo precheck.
-
-Revision 1.68  2002/11/07 02:14:51  bbb
-Use ~/redhat structure for non-root users.
-
-Revision 1.67  2002/11/07 01:59:13  bbb
-Removed --searchcpan flag.  (Forced on.)
-
-Revision 1.66  2002/11/07 01:02:06  bbb
-sudo to install if non-root
-
-Revision 1.65  2002/11/07 00:34:54  bbb
-Removed no-localcopy functionality to avoid making local copies of output files.
-
-Revision 1.64  2002/11/07 00:24:58  bbb
-More general instead of hard coding "i386" for buildarch.
-
-Revision 1.63  2002/11/06 23:58:43  bbb
-Works on RedHat 8.0 now too.
-
-Revision 1.62  2002/11/06 18:39:41  bbb
-Allow --install to upgrade from an old CPAN module.
-
-Revision 1.61  2002/11/06 18:32:07  bbb
-bad debug typo
-
-Revision 1.60  2002/11/06 17:55:33  bbb
-Documental changes.
-
-Revision 1.59  2002/11/06 17:46:21  bbb
-Now cpan2rpm rpm itself may be created purely
-from the tarball to avoid CHICKEN-AND-EGG dilemma.
-Usage:
-
-  rpm -ta cpan2rpm-*.tar.gz
-
-
-Added a --searchcpan option to walk search.cpan.org
-for the latest tarball of the passed module.  Does
-not require the CPAN module for this functionality.
-
-Revision 1.58  2002/11/06 00:57:50  bbb
-Use generic cpan author from url if no other author could be extracted.
-
-Revision 1.57  2002/11/06 00:08:29  bbb
-Allow --nopkgprfx to be compatible with --install option.
-
-Revision 1.56  2002/11/05 23:52:13  bbb
-Avoid broken ( " " ) VERSION.
-Fix mkdir logic.
-Work for multiple users on the same machine.
-Fix --spec-only to really only output the spec contents.
-
-Revision 1.55  2002/11/05 20:55:11  bbb
-Oop, handle tabs correctly.
-
-Revision 1.54  2002/11/05 20:32:53  bbb
-Try LWP in case HTTP::Lite is not installed.
-anal whitespace (nasty tabs)
-
-Revision 1.53  2002/09/19 03:53:05  ekkis
-patched to fix problem with tarballs that contain a leading ./ instead of just a directory name.  thx to Jim Radford <radford@robotics.caltech.edu> for pointing this out.
-
-Revision 1.52  2002/09/19 03:37:21  ekkis
-- added no-localcopy functionality to make local copies of output files
-- made %setup section more generic
-- patched use of HTTP::Lite
-- rearranged POD to have Author on a single line and added acknowledgements and license info
-
-Revision 1.51  2002/09/13 21:48:34  bbb
-Only use one line of the AUTHOR perldoc section to avoid breaking rpm spec syntax.
-
-Revision 1.50  2002/06/28 01:22:41  ekkis
-- our thanks to Jim Radford <radford@robotics.caltech.edu> for all the suggestions and patches resulting in this batch of changes
-- added --patch, --make and --make-install for greater flexibility
-- fixed regexp generating %doc list.  code now picks up documentation in subdirectories
-- modified use of HTTP::Lite to make optional.  cpan2rpm now works without it (minus capability to fetch urls)
-- README file now shows how to boot-strap HTTP::Lite
-
-Revision 1.49  2002/06/03 14:17:11  bbb
-Add username to buildroot to avoid multi-user machine conflicts.
-
-Revision 1.48  2002/06/01 01:07:38  ekkis
-minor POD change
-
-Revision 1.47  2002/06/01 01:04:24  ekkis
-- now uses the POD's Synopsis section for the RPM Description tag.  This is the way it should be since POD Descriptions typically contain large amounts of text.
-- Rewrote Synopsis and Description sections of the POD
-
-Revision 1.46  2002/05/31 23:59:33  ekkis
-- changed shebang line to make MakeMaker happy (thx Hook BOT)
-
-Revision 1.45  2002/05/31 23:35:40  ekkis
-- redesigned the %files section (at the suggestion of Eric Kolve [ekolve@corp.classmates.com]) to fix problems with modules that contain XS e.g. DBI
-- added a smart %doc section which picks up documentation from the tarball (with help from Hook-BOT (Bob Brown <bbb@cpan.org>) for file regexp)
-- now uses %{_prefix} to list files which is better than /usr since it allows redefinition e.g. _prefix=/usr/local (Hook-BOT)
-- trimmed descriptions and reformatted ad banner
-- improved %clean section with code that wipes the extracted source tree structure after building (which can bloat disk badly when doing a lot of rpms) - thx Hook-BOT!
-- fixed --spec-only (thx Eric Kolve)
-
-Revision 1.44  2002/05/29 16:32:10  bbb
-~/.rpmmacros
-
-Revision 1.43  2002/05/28 23:32:29  ekkis
-changed e-mail addresses
-
-Revision 1.42  2002/05/28 23:13:28  bbb
-Same as second round "1.3" but in the right place now.
-
-Revision 1.5  2002/05/23 02:55:37  ekkis
-adding "use strict" forces Makefile.PL to be eval()uated that way so had to add "no strict" to eval string.  Also added warning in case eval fails.
-
-Revision 1.4  2002/05/23 02:43:43  ekkis
-added use strict
-
-Revision 1.3  2002/05/23 02:14:04  ekkis
-oops, small patch
-
-Revision 1.2  2002/05/23 02:13:07  ekkis
-added --nopkgprfx in case we want to build RPMs without a prepended "perl-" (as in the case of cpan2rpm<g>)
-
-Revision 1.1  2002/05/22 23:47:59  ekkis
-Moved from dist to .
-
-Revision 1.40  2002/05/22 23:03:35  ekkis
-since we're no longer including the package version number in the spec filename when building multiple versions of the same package we're force to --force.  this makes no sense to the script will now _always_ build the spec file
-
-Revision 1.39  2002/05/19 01:04:44  ekkis
-still haveing problem with DBI - couldn't figure out how to eval() Makefile.PL so assuming pkgname from module (or passed)
-
-Revision 1.38  2002/05/18 22:55:00  ekkis
-- patched to allow calls like "use ExtUtils::MakeMaker qw(WriteMakefile)"... note this currently only works with () and will fail with qw//.  Due to DBI calls.
-- also changed MyExit() to die() instead since we really do need for the script to exit but without exiting us!
-- patched to allow for calls like  ExtUtils::MakeMaker::WriteMakefile() as found in DBD::mysql
-
-Revision 1.37  2002/05/07 04:21:49  ekkis
-added --make-maker parameter
-
-Revision 1.36  2002/04/23 00:29:24  ekkis
-- implemented protection of my variables from Makefile.PL being eval()d by surrounding that code with a package.  Considered the Safe module but decided against another dependency.
-
-Revision 1.35  2002/04/22 23:19:13  ekkis
---provides and --requires weren't working
-
-Revision 1.34  2002/04/18 08:32:53  ekkis
-- put back code to generate name/e-mail addr of packager (uses hostname())
-- added END {} code to make sure we clean up.  $SIG{__DIE__} works only for die() calls
-- now picks up AUTHOR from tarball POD when possible
-- modified version parsing code to allow versions with alpha
-- redesigned tarls().  now context sensitive, much better way to determine embedded directory
-- writefile() now checks for existence
-
-Revision 1.33  2002/04/17 08:52:43  ekkis
-- some bug fixes
-- {force} implementation for get_url()
-
-Revision 1.32  2002/04/17 08:40:50  ekkis
-- added --no-requires, --find-provides, --find-requires and --install options
-- now can receive a URL to download from
-- reimplemented MyExit for eval()ing Makefile.PL
-- enhancements to writefile()
-
-Revision 1.31  2002/04/16 04:06:53  ekkis
-ripped out all dependency (provides,requires) generation code as the newer rpm-buid generates this correctly
-
-Revision 1.30  2002/04/12 17:22:35  ekkis
-- filelist is now abstracted
-- cool new method for extracting CVS version without breaking emacs
-- new regexp for splitting path/filename from given $info{module}
-
-Revision 1.29  2002/04/09 23:00:16  ekkis
-took out %define version and release as it causes recursive behaviour
-
-Revision 1.28  2002/04/09 22:20:41  ekkis
-- better relative path handling
-- now prepends url to Source: field when available via CPAN
-- BuildRoot more automated now
-
-Revision 1.27  2002/04/09 08:25:00  ekkis
-- now requires version 0.59 or greater of CPAN as previous versions are problema tic
-- implemented use of RPM macros to figure outdirectory structures.  script now p arses the various macro definition files and does recursive expansions to figure out correct values... see docs.
-- added support for a full-path tarball specification.  this allows the user to call cpan2rpm with any tarball anywhere.  The tarball will be copied to SOURCES.
-- defined %version, %release
-- added Rob Brown's perlver %defines
-- BuildRoot now defaults to the standard %{_tmpdir}
-- removed version number from spec filename
-- now scans only usr/lib in tmpdir for modules (should give better Provides headers since we don't pick up .pm files in other directories like examples/)
-- added code to figure out real module dependencies (PREREQ_PM is unreliable)
-- now attempts to read VERSION_FROM if neither ABSTRACT nor ABSTRACT_FROM is provided.  failing that it will take the module name (minus any parent info, plus appropriate extension e.g. Ping.pm from Net::Ping), and if that file exists will scan it for POD
-
-Revision 1.26  2002/04/08 22:30:35  ekkis
-now requires CPAN version 0.59 as previous versions seem broken
-added to TODO list
-
-Revision 1.25  2002/04/07 09:18:19  ekkis
-hijacked exit() for the Makefile.PL eval since certain modules exit on us (not very exciting) e.g. POE
-
-Revision 1.24  2002/04/07 02:31:00  ekkis
-fixed generation of dependencies on Perl core modules (not allowed)
-
-Revision 1.23  2002/04/07 01:15:33  ekkis
-removed dashed lines from CHANGES section... don't konw thy CVS does use this in keyword expansion!
-
-Revision 1.22  2002/04/07 01:12:24  ekkis
-added old Log info
-
-Revision 1.21  2002/04/07 01:09:01  ekkis
-tarball maker now calls system() instead of qx// so user can see prompts
-added CHANGES section
-
-revision 1.20
-date: 2002/04/07 00:06:20;  author: ekkis;  state: Exp;  lines: +4 -1
-added back author info retrieval from CPAN when possible
-
-revision 1.19
-date: 2002/04/06 23:45:25;  author: ekkis;  state: Exp;  lines: +4 -2
-added availability section to pod
-
-revision 1.18
-date: 2002/04/06 23:43:00;  author: ekkis;  state: Exp;  lines: +6 -8
-changed default for license to "Artistic" as most modules are released under Perl's own license.
-
-revision 1.17
-date: 2002/04/06 23:13:31;  author: ekkis;  state: Exp;  lines: +2 -2
-removed spaces before =head1 NAME - he cares!!
-
-revision 1.16
-date: 2002/04/06 23:03:28;  author: ekkis;  state: Exp;  lines: +2 -2
-a fix for a fix
-
-revision 1.15
-date: 2002/04/06 22:51:36;  author: ekkis;  state: Exp;  lines: +2 -2
-fixed docs
-
-revision 1.14
-date: 2002/04/06 22:47:40;  author: ekkis;  state: Exp;  lines: +33 -19
-added --debug
-added -n in calls to silence questions from Makefile.PL (may not always work)
-now makes sure /tmp/cpan2rpm exists, creates as needed
-
-revision 1.13
-date: 2002/04/06 02:34:15;  author: ekkis;  state: Exp;  lines: +18 -1
-status info
-
-revision 1.12
-date: 2002/04/06 01:57:31;  author: ekkis;  state: Exp;  lines: +8 -5
-enhancement for f2mod() to generate RPM dependencies
-
-revision 1.11
-date: 2002/04/06 01:51:22;  author: ekkis;  state: Exp;  lines: +71 -68
-various fixes
-incorporated provides() into get_meta()
-correctly generates Provides header
-
-revision 1.10
-date: 2002/04/06 00:01:15;  author: ekkis;  state: Exp;  lines: +55 -22
-added f2mod()
-enhancements to untar()
-now generates Provides headers
-
-revision 1.9
-date: 2002/04/05 22:37:05;  author: ekkis;  state: Exp;  lines: +167 -102
-major code reorg
-now uses ExtUtils::Installed for platform independent module listings
-added --provides and --spec-only
-
-revision 1.8
-date: 2002/04/05 05:29:57;  author: ekkis;  state: Exp;  lines: +2 -2
-fixed regexp for tardir
-
-revision 1.7
-date: 2002/04/05 02:07:25;  author: ekkis;  state: Exp;  lines: +33 -20
-now eval()s Makefile.PL instead of parsing it
-also looks up DESCRIPTION from module file for spec file
-
-revision 1.6
-date: 2002/04/04 03:55:27;  author: ekkis;  state: Exp;  lines: +2 -2
-fixed embedded >s in C<> tags
-
-revision 1.5
-date: 2002/04/04 03:47:34;  author: ekkis;  state: Exp;  lines: +15 -5
-added author support
-
-revision 1.4
-date: 2002/04/04 02:20:32;  author: ekkis;  state: Exp;  lines: +105 -83
-general cleanup
-now excepts core Perl modules from RPM dependencies
-now supports ABSTRACT_FROM
-improved PREREQ_PM handling (with Provides: clause)
-
-revision 1.3
-date: 2002/04/03 12:33:14;  author: ekkis;  state: Exp;  lines: +38 -18
-various bug fixes
-
-revision 1.2
-date: 2002/04/03 11:08:32;  author: ekkis;  state: Exp;  lines: +144 -142
-now retrieves metadata from tarball
-
-revision 1.1
-date: 2002/04/03 10:57:00;  author: ekkis;  state: Exp;
-branches:  1.1.1;
-Initial revision
-
-revision 1.1.1.1
-date: 2002/04/03 10:57:00;  author: ekkis;  state: Exp;  lines: +0 -0
-Initial import
+$Id: cpan2rpm,v 2.5 2002/12/10 19:47:29 bbb Exp $
 
 =cut

@@ -18,7 +18,7 @@ If a package for your platform is not available, download the .src RPM and rebui
 
 # rpmbuild -ta cpan2rpm-*.tar.gz
 
-after which the resulting package will be located in /src/usr/redhat/RPMS/<your-platform-here>
+after which the resulting package will be located in /usr/src/redhat/RPMS/<your-platform-here>
 
 - NOTES -
 

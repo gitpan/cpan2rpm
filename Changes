@@ -1,5 +1,38 @@
 Revision history for cpan2rpm
 
+2.027 02/07/05 09:17:44
+- added error handling to untar()s system call.  Thanks to Paolo
+  Campanella <paolo@mighty.co.za> for submitting the patch
+- fixed problems in untar() with Windows zip file listings
+- applied patch from Tanner Lovelace <clubjuggler@gmail.com> to fix
+  problems with Mandrake builds having to do with document compression
+- another patch we owe to Garrick, this one strips out a = from --doc
+  when present
+- fixes to prologue and epilogue whereby ||s were forcing scalar context
+- fixed typo
+- thanks to Garrick Staples <garrick@usc.edu> for providing the patch
+- this patch cleans up the POD text scribbled on spec files.  Thanks
+  to Garrick Staples <garrick@usc.edu> for providing the patch.
+- two small changes.  The first simply puts single quotes around
+  arguments with spaces in the comment at the top of the generated spec file.
+  The second prevents the addition of the buildarch: tag if --spec-only
+  was used, and --buildarch wasn't specified; this generates a more
+  portable spec file.
+  Thanks to Garrick Staples <garrick@usc.edu> for providing the patch.
+- fixed archive listing for Windows zip files.  Thanks to Daniel
+  J. McDonald <dan.mcdonanld@austinenergy.com> for the code.
+- patched untar() to properly deal with tarballs that don't contain
+  directory entries (e.g. Image::Base)
+- renamed internal keys for cpanplus/cpan
+- added support notation for RHELv3 (thanks to Matt Allen
+  <mallen@theebizshop.net> for his note on compatibility)
+- fixes for various tarball listing issues
+- changed fetch default to C<web> and permissible values of --fetch parameter
+- no longer attempts CPAN+, CPAN but uses passed value
+- fixed handling of aggregate values passed to --no-requires which was
+  broken.  Thanks to Joshua Daniel Franklin [joshuadf@u.washington.edu]
+  for pointing this out.
+
 2.026 03/14/04 15:17:23
 - yikes! I broke the upgrade() function in having changed the
   interface for inst_rpm() - this patch fixes that.  Thanks to

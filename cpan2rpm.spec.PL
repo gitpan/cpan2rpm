@@ -6,7 +6,7 @@ use strict;
 my $reqs = join ";"
     , qq([ -e /etc/SuSE-release -o -e /etc/UnitedLinux-release ] && SuSE=1)
     , qq(ver=`rpm -q rpm --qf %%{version}|awk -F . '{print \$1}'`)
-    , qq([ \$ver -le 3 -o -s \$SuSE ] && echo rpm || echo rpm-build)
+    , qq([ \$ver -le 3 -o -n "\$SuSE" ] && echo rpm || echo rpm-build)
     ;
 
 my @cmd = (

@@ -20,7 +20,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.026";
+$VERSION = "2.027";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -28,6 +28,7 @@ use strict;
 use warnings;
 use Getopt::Long;
 use Sys::Hostname;
+use Pod::Text;
 
 my ($ME, $RPM, $TMPDIR, %RPMDIR, $CWD, %info, %meta, $ARGS);
 
@@ -108,14 +109,14 @@ sub init {
         "requires=s@"     => "packages required for installation",
         "provides=s@"     => "modules provided by the package",
         "buildrequires=s@" => "packages required for building",
-        "no-requires=s"   => "suppresses generation of a set of reqs",
+        "no-requires=s@"  => "suppresses generation of a set of reqs",
         "source|s=s@"     => "specifies (multiple) sources to use",
         "patch|p=s@"      => "specifies (multiple) patches to apply",
         "doc=s"           => "adds to the spec's %doc section",
         "define=s@"       => "define macros",
         # -- section options
-        "prologue=s"      => "inserts text at beginning of section",
-        "epilogue=s"      => "inserts text at end of section",
+        "prologue=s@"     => "inserts text at beginning of section",
+        "epilogue=s@"     => "inserts text at end of section",
         # -- build options
         "spec-only"       => "only generates spec file",
         "spec=s"          => "specifies the name of a spec file",
@@ -165,7 +166,7 @@ sub init {
 
     my %opts = ();
     my @args = grep !/^-D$/, @ARGV;
-    $ARGS = join " ", @args;
+    $ARGS = join " ", map {/\s/ ? qq/'$_'/ : $_} @args;
     my $ret = GetOptions(\%opts, keys %desc);
 
     exec("$^X -d $0 " . join(" ", @args)) if $opts{D};
@@ -240,36 +241,37 @@ sub init {
     $RPMDIR{ARCH} = getrpm_macdef("_arch");
     chkdirs();
 
-    $info{buildarch} ||= $RPMDIR{ARCH};
+    # sets empty string if not --buildarch and --spec-only
+    $info{buildarch} ||= $info{"spec-only"} ? "" : $RPMDIR{ARCH};
 
     # set module download method
 
     my %cpan = (
-        plus => \&get_cpan_plus,
-        old => \&get_cpan_old,
+        cpanplus => \&get_cpan_plus,
+        cpan => \&get_cpan_old,
         web => \&get_cpan_web
         );
 
     if ($info{fetch}) {
         $info{fetch} = lc($info{fetch});
-        die "Invalid fetch method specified.  See man page for --cpan\nStopped"
-            unless $info{fetch} =~ /plus|old|web/;
-        $info{get_mod} = $info{fetch};
-        }
-    elsif ($@ = "", eval q/use CPANPLUS::Backend/, !$@) {
-        print "CPAN+ found\n";
-        $info{get_mod} = "plus";
-        }
-    elsif ($@ = "", eval q/use CPAN 0.59/, !$@) {
-        print "CPAN+ not found - using old interface\n";
-        $info{get_mod} = "old";
-        }
-    else {
-        print "No CPAN modules found - using web interface\n";
-        $info{get_mod} = "web";
+        die "Invalid fetch method specified.  See man page for --fetch\nStopped"
+            unless $info{fetch} =~ /cpanplus|cpan|web/;
         }
 
-    $info{get_mod} = $cpan{$info{get_mod}};
+    $@ = "";
+    $info{fetch} ||= "web";  # default
+    if ($info{fetch} eq "cpanplus" && (eval q/use CPANPLUS::Backend/, !$@)) {
+        print "Fetch: CPAN+\n";
+        }
+    elsif ($info{fetch} eq "cpan" && (eval q/use CPAN 0.59/, !$@)) {
+        print "Fetch: CPAN\n";
+        }
+    else {
+        print "Fetch: HTTP\n";
+        $info{fetch} = "web";
+        }
+
+    $info{get_mod} = $cpan{$info{fetch}};
 
     # set requirements patch override
 
@@ -358,6 +360,7 @@ sub get_mod {
 
 sub get_meta {
     my $info = shift || $_; local $_;
+    my $pod = Pod::Text->new();
 
     print "Metadata retrieval\n";
 
@@ -389,8 +392,8 @@ sub get_meta {
 
     $_ = "$info->{evaldir}/Build.PL";
     $_ = "$info->{evaldir}/Makefile.PL" unless -e;
-    die qq/No PL file in tarball/ unless -e;
-    die qq/Cannot read PL file/ unless -r;
+    die qq/No PL file [$_] in tarball/ unless -e;
+    die qq/Cannot read PL file [$_]/ unless -r;
 
     ($info->{PL} = $_) =~ s|.*/||;
 
@@ -514,20 +517,18 @@ sub get_meta {
 
     $meta{ABSTRACT} ||= "";
     if (!$meta{ABSTRACT} && $from) {
-        local $_ = $from;
-        ($meta{ABSTRACT}) = /=head\d\s+NAME.*?-\s*(.*?)$/ism;
+        $meta{ABSTRACT} = $pod->interpolate($1)
+            if $from =~ /=head\d\s+NAME.*?-\s*(.*?)$/ism;
         }
 
     $meta{DESCRIPTION} ||= "";
     if (!$meta{DESCRIPTION} && $from) {
-        local $_ = $from;
-        ($meta{DESCRIPTION}) = /=head\d\s+DESCRIPTION\s+(.*?)=(head|cut)/ism;
-            ;
-        ($meta{DESCRIPTION}) = /=head\d\s+SYNOPSIS\s+(.*?)=(head|cut)/ism
-            unless $meta{DESCRIPTION};
-        $meta{DESCRIPTION} ||= "";
-        $meta{DESCRIPTION} =~ s/E<lt>/</ig;
-        $meta{DESCRIPTION} =~ s/E<gt>/>/ig;
+        if ($from =~ /=head\d\s+DESCRIPTION\s+(.*?)=(head|cut)/ism) {
+            $meta{DESCRIPTION} = $pod->interpolate($1)
+            }
+        elsif ($from =~ /=head\d\s+SYNOPSIS\s+(.*?)=(head|cut)/ism) {
+            $meta{DESCRIPTION} = $pod->interpolate($1)
+            }
         }
 
     $info->{author} ||= $meta{AUTHOR} || "";
@@ -606,7 +607,7 @@ sub get_meta {
         }
     $info->{doc} ||= "";
     $info->{doc} = join " ", $info->{doc}, keys %doc
-        unless $info->{doc} =~ /^=/;
+        unless $info->{doc} =~ s/^=//;
     $info->{doc} &&= "%doc $info->{doc}";
 
     #   fixes the #! so perl can be found (and deps get made ok)
@@ -663,14 +664,18 @@ EOF
     #   section handlers
 
     my $prologue = $info->{prologue};
+    delete $info->{prologue};
     for (@$prologue) {
-        my ($sec, $v) = /^(\w+):(.*)$/ || next;
+        /^(\w+):(.*)$/ || next;
+        my ($sec, $v) = ($1, $2);
         $info->{prologue}{$sec} = $v . $/;
         }
 
     my $epilogue = $info->{epilogue};
+    delete $info->{epilogue};
     for (@$epilogue) {
-        my ($sec, $v) = /^(\w+):(.*)$/ || next;
+        /^(\w+):(.*)$/ || next;
+        my ($sec, $v) = ($1, $2);
         $info->{epilogue}{$sec} = $v . $/;
         }
 
@@ -683,7 +688,9 @@ EOF
 
     if ($info->{"no-requires"}) {
         my $noreqs = "";
-        $noreqs .= qq/-e '$_' / for split /\s*,\s*/, $info->{"no-requires"};
+        for (@{$info->{"no-requires"}}) {
+            $noreqs .= qq/-e '$_' / for split /\s*,\s*/;
+            }
         delete $info->{"no-requires"};
         $info->{"no-requires"}{"define"}
             = "%define custom_find_req %{_tmppath}/%{NVR}-find-requires";
@@ -908,7 +915,9 @@ ZZ
         $info->{"no-requires"}{"install"}
         $install
 
-        [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
+        cmd=/usr/share/spec-helper/compress_files
+        [ -x \$cmd ] || cmd=/usr/lib/rpm/brp-compress
+        [ -x \$cmd ] && \$cmd
 
         # SuSE Linux
         if [ -e /etc/SuSE-release -o -e /etc/UnitedLinux-release ]
@@ -1236,16 +1245,24 @@ sub ls {
 sub untar($) {
     local $_ = shift;
     my $dst = shift || $TMPDIR;
+    my $zip = /\.zip$/;
 
     my $z = /\.tar\.bz2$/i ? "j" : "z";
     my @cmd = (qw/tar -x --directory/, $dst, "-$z", "-f", $_);
     @cmd = (qw/unzip -d/, $dst, $_) if /\.zip$/i;
-    system @cmd;
+    system(@cmd) == 0 || die "system @cmd failed: $?";
     system("chmod", "-R", "u+w", $dst);
 
-    my $d = qx/tar -t${z}f $_ |head -1/;
-    chomp($d);
-    $dst .= "/$d" if $d =~ s|/.*$||;
+    my $cmd = $zip
+        ? "unzip -l $_ | grep -P -o '\\S+/\$' |tail -1"
+        : "tar -t${z}vf $_ |head -1"
+        ;
+
+    chomp($_ = qx/$cmd/);
+    $_ = (split)[5] unless $zip;
+    $dst .= "/$1" if m|^(\S+)/|;
+    $dst =~ s|/*$||;    # path shouldn't end in / or tardir gets wiped
+    $dst =~ s|\./||;    # paths in tarballs shouldn't be relative
     return $dst;
     }
 
@@ -1565,7 +1582,7 @@ sub mksec {
     my $info = shift;
     my $nm = shift;
     my $ret = qq|$/%$nm|;
-    $ret .= "$/$info->{prologue}{$nm}" if $info->{proglogue}{$nm};
+    $ret .= "$/$info->{prologue}{$nm}" if $info->{prologue}{$nm};
     $ret .= "$/$_" for @_;
     $ret .= "$/$info->{epilogue}{$nm}" if $info->{epilogue}{$nm};
     $ret;
@@ -1829,8 +1846,8 @@ These represent tags which may be repeated in the spec file.  With all of the fo
 
 I<exempli gratia>
 
---requires="rpm, rpm-build"
---requires="rpm" --requires="rpm-build"
+  --requires="rpm, rpm-build"
+  --requires="rpm" --requires="rpm-build"
 
 =over
 
@@ -1970,7 +1987,7 @@ The options below perform functions not closely related to the quotidien process
 
 =item B<--fetch=C<string-value>>
 
-One of B<plus>, B<old>, B<web>, this parameter specifies which method to use when retrieving a module from CPAN.  If left unspecified this value is calculated by probing for the existence of the required modules in the given order i.e. if CPAN+ is installed, it is used, otherwise, if CPAN is installed that is used.  If all else fails the web page is scraped for the module.
+One of B<cpanplus>, B<cpan> or B<web>, this parameter specifies which method to use when retrieving a module from CPAN.  Web retrievals are by parsing the CPAN website and may be faster though more error prone.  To use either the CPAN or CPAN+ modules, these must be installed.  Default: web.
 
 =item B<--modules, -f =C<string-value>>
 
@@ -2056,6 +2073,7 @@ At present, B<cpan2rpm> has been tested and is known to work under the following
 The script has been tested under the OS list below:
 
     - Linux RedHat: 6.1, 6.2, 7.0, 7.2, 7.3, 8.0, 9.0
+    - Linux Enterprise v3 (RHELv3)
     - SuSE 8.1, 9.0
 
 Rumour has it it's been tested on Solaris and FreeBSD as well but I don't know for sure.  See README.redhat6 for 6.x issues to be aware of.
@@ -2096,7 +2114,7 @@ For help, you can subscribe to our mailing list at:
 
 F<http://lists.sourceforge.net/lists/listinfo/cpan2rpm-general>
 
-or send a message to F<cpan2rpm-general-request@lists.sourceforge.net> with C<help> as the subject header.
+or send a message to F<cpan2rpm-general-request@lists.sourceforge.net> with C<help> as the subject header.  Please note, when submitting patches, please first retrieve the latest (unreleased version of the script from the home page).
 
 Feature requests, bug reports and patch submissions should also be handled through SourceForge.
 
@@ -2139,6 +2157,6 @@ Copyright (c) 2002-2003 Erick Calder <ecalder@cpan.org>
 
 This product is free and distributed under the Gnu Public License (GPL).  A copy of this license was included in this distribution in a file called LICENSE.  If for some reason, this file was not included, please see F<http://www.gnu.org/licenses/> to obtain a copy of this license.
 
-$Id: cpan2rpm,v 2.281 2004/03/14 23:12:12 ekkis Exp $
+$Id: cpan2rpm,v 2.294 2005/02/07 17:25:27 ekkis Exp $
 
 =cut

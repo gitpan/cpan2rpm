@@ -4,6 +4,7 @@
 use strict;
 
 my @cmd = (
+    $^X,
     "./cpan2rpm",
     ((eval("use File::Temp"),$@) ? ("--tempdir","/tmp/cpan2rpm") : ()),
     "--force",

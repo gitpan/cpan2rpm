@@ -1,15 +1,43 @@
 Revision history for cpan2rpm
 
+2.021 11/17/2003 01:40:54
+- added support for Module::Build as an installer (required by some
+  modules e.g. Config::Natural) - thx Richard Bos [radoeka@xs4all.nl]
+  for pointing it out.
+- fixed broken dependencie due to module scripts referring to hard-coded
+  perl paths (Text::Reform called /usr/local/bin/perl).  now runs fixin()
+  through all sources instead of just through the %doc files.
+- modifications to make setuid-safe
+- changes to output format (for web support)
+- failures to retrieve a tarball now abort the script
+- package descriptions are now culled from DESCRIPTION header in the POD
+  and only as a backup is SYNOPSIS used
+- default/suggested value for --mk-rpm-dirs is now ~/rpm
+- added SuSE 9.0 to supported list
+- In SLES8 (SuSE Linux Enterprise Server) the intel version has no
+  /etc/SuSE-release but uses /etc/UnitedLinux-release.  thx for the tip to
+  Tzafrir Cohen <tzafrir@technion.ac.il>
+- as per e-mail from Paolo Campanella <paolo@mighty.co.za>, RPM >= 4.2
+  now looks for the custom requires filter in __perl_requires instead of
+  the old __find_requires
+- getting --no-requires to work with new rpm-4.2-0.69 (RedHat9).  Spot
+  and fix by jw35@cam.ac.uk (Jon Warbrick).
+- File::Temp errors are now only displayed when --debug
+- updated TODO list
+
 2.020  2003/09/25 18:00:00
-- compatibility fixes for non-root (sudo) --install on RedHat 9 spotted by Allen Bettilyon [allen@about-inc.com].
+- compatibility fixes for non-root (sudo) --install on RedHat 9 spotted
+  by Allen Bettilyon [allen@about-inc.com].
 - compatibility fixes for ExtUtils::MakeMaker >= 6.15.
-- added the --no-depchk switch to suppress the upfront check for dependent perl modules.
+- added the --no-depchk switch to suppress the upfront check for dependent
+  perl modules.
 - fix bug #2835 reported by mariuslj@cpan.org.
 - fix some license issues.
 - reformatted spec output for cleaner look.
 - added arguments used to generate spec file to the spec header.
 - added support for the standard ftp client as a last resort.
-- added code to specfile to make packages relocatable. Patch by Willis Brandon [Brandon.Willis@acxiom.com].
+- added code to specfile to make packages relocatable. Patch by Willis
+  Brandon [Brandon.Willis@acxiom.com].
 - added display of specfile path written to in --spec-only case.
 - added notes to README about configuring wget for passive ftp use.
 

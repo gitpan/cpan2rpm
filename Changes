@@ -1,5 +1,19 @@
 Revision history for cpan2rpm
 
+2.013  2003/02/20 20:54:21
+- Allow --upgrade to work without specifying a module.
+- fixed bug with --no-requires about a hash dereference on a string under strict
+- somewhere between CPAN version 1.52 and 1.65 the interface to CPAN::Shell->expand() changed, moving all relevant data to the RO key.  to support older versions cpan2rpm now unfolds this hash
+- searchcpan() now states when module not found
+- added code to check PREREQ_PM for dependencies.  program now quits listing missing dependencies when appropriate
+- warnings for fetching files from the net reworked.  no longer warns when installing libwww-perl and doesn't double warn (when chkupgrade() runs)
+- added notification when checking for upgrades
+- fixed bug with external program handling for http_get() + cleaned up language
+- program now dies (as it should) when building a package fails
+- when copying files we now now make sure file exists
+- when working on a directory, the tarball name is now generated correctly e.g. String-Canonical-1.2.tar.gz NOT Canonical-1.2.tar.gz
+- Some cpan distributions contain the actual "." within it (e.g. CGI.pm and Net_SSLeay.pm) so this is now handled properly
+
 2.012  2003/02/12 04:05:50
 - Add README.redhat6 for special instructions and issues
 pertaining to rh 6.x.

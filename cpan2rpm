@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.012";
+$VERSION = "2.013";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -13,6 +13,14 @@ use strict;
 use Getopt::Long;
 use Sys::Hostname;
 use ExtUtils::MakeMaker 5.4302;
+
+my ($RPM, $TMPDIR, %RPMDIR, $CWD, %info, %meta, $Temp);
+
+my $tarRE = q/\.(tar\.(g?z|bz2)|tgz|zip)$/;
+my $docRE = '(readme|changes|todo|license|install|\.txt|\.html)';
+my $HTTPWARN = 0;   # so we don't repeat warnings
+
+*OLDOUT = *OLDERR = *OLDIN = "";
 
 # --- main() ------------------------------------------------------------------
 
@@ -25,9 +33,6 @@ inst_rpm();        # install it if requested
 
 # --- support functionality ---------------------------------------------------
 
-my ($RPM, $TMPDIR, %RPMDIR, $CWD, %info, $tarRE, $docRE, %meta, $Temp);
-*OLDOUT = *OLDERR = *OLDIN = "";
-
 END {
     chdir $CWD;
     return print("$VERSION\n") if $VX;
@@ -36,8 +41,6 @@ END {
 
 sub init {
     $|++;    # good for system()
-    $tarRE = q/\.(tar\.(g?z|bz2)|tgz|zip)$/;
-    $docRE = '(readme|changes|todo|license|install|\.txt|\.html)';
 
     chomp($CWD = qx/pwd/);
 
@@ -139,9 +142,10 @@ sub init {
         mkdir $TMPDIR, 0755 unless -d $TMPDIR;
         }
     else {
-        my $msg = "Install File::Temp or use the --tempdir option.";
+        my $msg = "Cannot run without File::Temp, please install ";
+        $msg .= "or use the --tempdir option.";
         eval "use File::Temp qw/tempdir tempfile/";
-        die "$@\n\n$msg\n\n" if $@;
+        die "$@\n$msg\n" if $@;
 
         $Temp = 1;
         $info{dist} ||= "";
@@ -179,12 +183,13 @@ sub init {
         exit(0);
         }
 
+    upgrade() if defined $info{upgrade};
+
     $info{dist} = shift @ARGV
         || syntax(\%desc, "No distribution specified!");
 
     #   deal with newer versions
-
-    defined $info{upgrade} ? upgrade() : chkupgrade();
+    chkupgrade();
 
     $RPMDIR{BUILD} = getrpm_macdef("_builddir");
     $RPMDIR{SOURCES} = getrpm_macdef("_sourcedir");
@@ -218,14 +223,15 @@ sub init {
     $ENV{CPAN2RPM_REQ_ALL} = $info{"req-scan-all"} || "";
 
     if ($< && $info{install}) {
-        print "\nNON ROOT install requires sudo rpm privileges\n";
+        print "NON ROOT install requires sudo rpm privileges\n";
         if (system("sudo rpm -v > /dev/null")) {
-            print "You can configure sudo with the following command:\n\n";
-            print "  echo ".getlogin()." ALL=/bin/rpm >> /etc/sudoers\n\n";
-            die "sudo failed: CANNOT USE --install OPTION!  Stopped";
+            my $msg = "sudo failed, cannot use --install option!  You can\n";
+            $msg .= "configure sudo with the following command:\n\n";
+            $msg .= "  echo \"".getlogin()." ALL=/bin/rpm\" >> /etc/sudoers";
+            die "\n$msg\n\nStopped";
             }
 
-        print "sudo precheck successful.\n";
+        print "sudo precheck successful\n";
         }
     }
 
@@ -311,7 +317,18 @@ sub get_meta {
     unlink $t || die "get_meta(): rm[$t] - $!";
     }
 
-    #    figure out package name
+    #   make sure dependencies are installed
+
+    my @deps;
+    my $deps = $meta{PREREQ_PM};
+    for (keys %$deps) {
+        $@ = ""; eval "use $_ $deps->{$_}";
+        push @deps, "$_ >= $deps->{$_}" if $@; 
+        }
+    my $msg = "Unable to build module, the following dependencies have failed:";
+    die "$msg\n  " . join("\n  ", @deps) . "\nStopped" if @deps;
+
+    #   figure out package name
 
     $info{module} ||= $meta{DISTNAME} || $meta{NAME};
     if (!$info{module}) {
@@ -334,7 +351,7 @@ sub get_meta {
 
     $info{spec} ||= "$RPMDIR{SPECS}/$info{name}.spec";
 
-    #    get module description info
+    #   get module description info
 
     my $from = $meta{ABSTRACT_FROM} || $meta{VERSION_FROM};
     ($from = "$info{module}.pm") =~ s/.*:// unless $from;
@@ -381,7 +398,7 @@ sub get_meta {
     die "No author information found, please use --author option.  Stopped"
         unless $info{author};
 
-    #    extract version
+    #   extract version
 
     $info{version} ||= $meta{VERSION};
     unless ($info{version}) {
@@ -399,6 +416,7 @@ sub get_meta {
     #   for directories, guess some of the needed values
 
     if (-d $info{dist}) {
+        ($info{tardir} = $info{module}) =~ s|::|-|g;
         $info{tardir} .= "-$info{version}"
             unless $info{tardir} =~ /-(\d+.*)$/;
         $info{tarball} = "$info{tardir}.tar.gz";
@@ -424,7 +442,7 @@ sub get_meta {
     if ($info{doc}) {
         $info{fixin} = <<EOF;
             grep -rsl '^#!.*perl' $info{doc} |
-            grep -v '\.bak\$' |xargs \\
+            grep -v '\.bak\$' |xargs --no-run-if-empty \\
             %__perl -MExtUtils::MakeMaker -e 'MY->fixin(\@ARGV)'
 EOF
         }
@@ -487,6 +505,7 @@ EOF
     if ($info{"no-requires"}) {
         my $noreqs = "";
         $noreqs .= qq/-e '$_' / for split /\s*,\s*/, $info{"no-requires"};
+        delete $info{"no-requires"};
         $info{"no-requires"}{"define"}
             = "%define custom_find_req %{_tmppath}/%{NVR}-find-requires";
         $info{"find-requires"} = "%define __find_requires %{custom_find_req}";
@@ -789,7 +808,7 @@ sub mk_rpm {
         splice @cmd, 2, 1 if $info{"no-clean"};
         print join " ", ">>", @cmd, "\n" if defined $info{debug};
         system(@cmd);
-        warn("RPM build failed!") if $ret = $? >> 8;
+        die "RPM build failed!" if $ret = $? >> 8;
         }
 
     return $ret;
@@ -821,57 +840,39 @@ sub searchcpan {
     my $dist = shift || $info{dist};
 
     # Abort unless it smells like a CPAN module
-    return unless $dist =~ /^[\w:\-]+$/;
+    return unless $dist =~ /^[\w:\-.]+$/;
 
     my $cache = "$RPMDIR{SOURCES}/$dist";
     if (!$info{force} and my $url = readlink($cache)) {
-        print "Using cached URL $url\n";
+        print "Using cached URL\n";
         return $url;
         }
 
     print "Searching CPAN website\n";
-    # XXX - This algorithm may change as the
+
+    my $base = "http://search.cpan.org";
+    my $url = "$base/dist/$dist"; $url =~ s/::/-/g;
+
+    # XXX - this algorithm may change as the
     # search.cpan.org web site output changes.
-    $@ = ""; eval "use HTTP::Request::Common; use LWP::UserAgent;";
-    if ($@) {
-        my $url;
-        # Could not load libwww-perl
-        print "-- WARNING: libwww-perl module not found! --\n";
-        print "Install libwww-perl to avoid this warning.\n";
-        print "One of the following options may help:\n";
-        $url = "http://www.rpmfind.net/linux/rpm2html/search.php";
-        $url .= "?query=perl-libwww-perl";
-        print "  1) Try $url\n";
-        $url = "http://www.cpan.org/modules/by-module/LWP/";
-        $url .= "libwww-perl-5.68.tar.gz";
-        print "  2) Specify the full URL of the tarball manually.\n";
-        print "     cpan2rpm -i $url\n";
-        print "  3) Download tarball and specify file on commandline.\n";
-        print "  4) Configure CPAN:  perl -MCPAN -eshell\n";
-        print "  5) cpan2rpm -i libwww-perl\n";
-        }
-    else {
-        $dist =~ s/::/-/g;
-        my $url = "http://search.cpan.org/dist/$dist/";
-        my $ua = new LWP::UserAgent;
-        my $response = $ua->request(GET($url));
-        my $page = $response->content;
-        if ($page && $page =~
-            m%\<a[^<>]*       # Begin Anchor tag
-            href\s*=\s*       # href parameter
-            (['"]?)           # Maybe quote
-            ([^<>\s"']*)      # Extract link as $2
-            \1                # Maybe quote
-            [^<>]*\>          # End Anchor tag
-            \s*Download       # of the "Download" link
-            %ix               # case insensitive HTML
-            ) {
-            $url = URI->new_abs($2, $response->base)->as_string;
-            print "Found URL $url\n";
-            symlink($url, $cache);
-            return $url;
-            }
-        }
+
+    local $_ = http_get($url) || return;
+    m% \<a[^<>]*         # Begin Anchor tag
+        href\s*=\s*       # href parameter
+        (['"]?)           # Maybe quote
+        ([^<>\s"']*)      # Extract link as $2
+        \1                # Maybe quote
+        [^<>]*\>          # End Anchor tag
+        \s*Download       # of the "Download" link
+        %ix;              # case insensitive HTML
+
+    print("- $info{dist} not found!\n"), return
+        unless $2;
+
+    print "Found: $url\n";
+    $url = "$base/$2";
+    symlink($url, $cache);
+    return $url;
     }
 
 #
@@ -891,10 +892,16 @@ sub get_cpan {
     my $m = CPAN::Shell->expand("Module", $module)
         || die "Module not found on CPAN!";
 
-    my $a = CPAN::Shell->expand("Author", $m->{RO}->{CPAN_USERID});
-    $info{author} ||= "$a->{RO}->{FULLNAME} <$a->{RO}->{EMAIL}>";
+    # somewhere between CPAN version 1.52 and 1.65 the interface
+    # changed, moving all relevant data to the RO key
 
-    my $f = $m->{RO}->{CPAN_FILE};
+    $m = $m->{RO} if $m->{RO};
+
+    my $a = CPAN::Shell->expand("Author", $m->{CPAN_USERID});
+    $a = $a->{RO} if $a->{RO};
+    $info{author} ||= "$a->{FULLNAME} <$a->{EMAIL}>";
+
+    my $f = $m->{CPAN_FILE};
     push @{$info{source}}, sprintf("%s/authors/id/%s"
         , "http://www.cpan.org"
         , $f
@@ -1004,6 +1011,7 @@ sub writefile($@) {
 sub cp {
     my ($f, $d, $ff) = @_;
     $f =~ s/~/$ENV{HOME}/;
+    return 1 unless -r $f;
     ($ff = $f) =~ s|.*/||;
     return 1 if finode($f) eq finode("$d/$ff");
     system("cp", "-u", $f, $d) == 0;
@@ -1024,26 +1032,48 @@ sub isurl {
     scalar m#(ht|f)tp://#;
     }
 
-#    Syntax: tarball = get_url [url]
+#    Syntax: content = http_get [url]
 
-sub get_url {
+sub http_get {
     my $url = shift || $_;
 
-    $@ = ""; eval "use HTTP::Request::Common; use LWP::UserAgent;";
-    if (!$@) {
+    $HTTPWARN = 1 if $info{dist} =~ /libwww-perl/;
+
+    if ($@ = "", eval "use HTTP::Request::Common; use LWP::UserAgent;", !$@) {
         my $ua = LWP::UserAgent->new();
-        return $ua->request(GET($url))->content;
+        return $ua->request(GET($url))->content || "";
         }
-    elsif ($@ = "", eval "use HTTP::Lite;", !$@) {
-        my $http = HTTP::Lite->new();
-        $http->request($url) || die "get_url(): $!.  Stopped";
-        return $http->body();
+    elsif ($HTTPWARN == 0) {
+        print "\nWARNING: libwww-perl module not found.  To install, one ";
+        print "of the following options may help:\n\n";
+
+        local $\ = $/;
+        my $url = "http://www.rpmfind.net/linux/rpm2html/search.php";
+        $url .= "?query=perl-libwww-perl";
+        print "  1) Try $url";
+        $url = "http://www.cpan.org/modules/by-module/LWP/";
+        $url .= "libwww-perl-5.68.tar.gz";
+        print "  2) Specify the full URL of the tarball manually.";
+        print "     cpan2rpm -i $url";
+        print "  3) Download tarball and specify file on commandline.";
+        print "  4) Configure CPAN: perl -MCPAN -eshell";
+        print "  5) cpan2rpm -i libwww-perl\n";
+        print "Trying HTTP::Lite...";
         }
 
-    # Could not load libwww-perl
-    print "-- WARNING: libwww-perl module not found! --\n";
-    print "Install libwww-perl to avoid this warning\n";
-    print "e.g. cpan2rpm --install libwww-perl\n";
+    if ($@ = "", eval "use HTTP::Lite;", !$@) {
+        my $http = HTTP::Lite->new();
+        $http->request($url) || die "http_get(): $!.  Stopped";
+        return $http->body() || "";
+        }
+    elsif ($HTTPWARN == 0) {
+        print "\nWARNING: this alternative module could not be found ";
+        print "either!  Please install the libwww-perl package ";
+        print "as indicated above.\n\n";
+        print "Trying external programs...\n";
+        }
+
+    $HTTPWARN = 1;
 
     my @prg = (
         "/usr/bin/lynx -source $url",
@@ -1053,15 +1083,15 @@ sub get_url {
         );
 
     for (@prg) {
-        my $p = /^(\S)+/;
+        my ($p) = /^(\S+)/;
         next unless -e $p;
-        print "Trying: ", $p =~ m|([^/]+)$|;
         my $ret = qx/$_/;
-        print("Success!\n"), return $ret if $? == 0;
+        print("Retrieving with [", $p =~ m|([^/]+)$|, "]\n"), return $ret
+            if $? == 0;
         }
 
-    my $msg = "External program download failed";
-    die "$msg.  Manual download required.  Stopped";
+    my $msg = "External program support failed.  Manual download required";
+    die "> $msg.\nStopped";
     }
 
 #    Syntax: tarball = write_url <directory> [url]
@@ -1077,7 +1107,7 @@ sub write_url {
     return $tar if -s "$d/$tar" && -r _ && !$info{force};
 
     print "Retrieving URL\n";
-    local $_ = get_url($url);
+    local $_ = http_get($url);
     return unless $_;
 
     writefile("$d/$tar");
@@ -1123,18 +1153,18 @@ sub inpath($) {
 
 sub chkupgrade {
     return if defined $info{"no-upgrade-chk"};
+    print "Upgrade check\n";
 
     my $up = "";
     eval {
         alarm(5);
         $SIG{ALRM} = sub {
-            print "Upgrade check elapsed...\n";
-            die "network too slow";
+            die "Network too slow, check elapsed...\n";
             };
         my $mod = $info{dist}; $mod =~ s|.*/||;
         local $_ = "http://perl.arix.com/cpan2rpm/?";
         $_ .= "version=$VERSION&mod=$mod";
-        $up = get_url();
+        $up = http_get();
         };
     alarm(0);
     return unless $up eq "Y";
@@ -1142,12 +1172,12 @@ sub chkupgrade {
     local $\ = $/;
     print "";
     print "* A newer version of this program is now available. To upgrade";
-    print "* enter the following command: cpan2rpm --upgrade\n";
+    print "* enter the following command: $0 --upgrade\n";
     }
 
 sub upgrade {
     $info{install}++;
-    my $url = get_url("http://perl.arix.com/cpan2rpm/?latest=gz");
+    my $url = http_get("http://perl.arix.com/cpan2rpm/?latest=gz");
     unless (write_url($TMPDIR, $url)) {
         local $\ = $/;
         print "\nERROR: Unable to automatically upgrade, please visit our web";
@@ -1379,11 +1409,11 @@ These represent tags which may be repeated in the spec file.  Users may specify 
 
 =over
 
-=item B<--prologue="E<lt>sectionE<gt>:E<lt>codeE<gt>>
+=item B<--prologue=C<E<lt>sectionE<gt>:E<lt>codeE<gt>>>
 
 This option allows the user to insert arbitrary code at the top of a given section of the spec file.  The section is named in the value passed to the option as the first word followed by a colon.  At present, the following sections are supported: I<prep>, I<build>, I<install>, I<clean>, I<changelog>.
 
-=item B<--epilogue="E<lt>sectionE<gt>:E<lt>codeE<gt>>
+=item B<--epilogue=C<E<lt>sectionE<gt>:E<lt>codeE<gt>>>
 
 As with the previous option, this may be used to insert code at the end of a given section.  This option also supports the I<tag> and I<files> sections which allow for the user to insert extra tags or files to the spec file.
 
@@ -1425,6 +1455,7 @@ Use this option to suppress running a module's test suite during build.
 Allows user to supply arguments to the make install process.
 
 =item B<--find-provides=C<string-value>>
+
 =item B<--find-requires=C<string-value>>
 
 These two options allow for redefining the RPM macros of the same name in the spec file.
@@ -1452,8 +1483,7 @@ By default the script will do as little work as possible i.e. if it has already 
 
 =item B<--install>
 
-Install the RPM after building it.  If non-root user, you
-must have "sudo rpm" privileges to use this option.
+Install the RPM after building it.  If non-root user, you must have "sudo rpm" privileges to use this option.
 
 =back
 
@@ -1557,6 +1587,6 @@ F<http://perl.arix.com/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.166 2003/02/12 07:15:33 ekkis Exp $
+$Id: cpan2rpm,v 2.187 2003/02/21 04:54:06 ekkis Exp $
 
 =cut

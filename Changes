@@ -1,10 +1,15 @@
 Revision history for cpan2rpm
 
+2.007  2002/12/17 20:35:48
+- fixed problem with building packages that define neither DISTNAME nor NAME in the call to MakeMaker(), resulting in an unwriteable filename which included a given url.  Thanks to Rainer Lay for pointing this out.  the script broke building the C<Class-MethodMaker> package.
+- changed all references to $RPM_BUILD_ROOT to the more flexible %{buildroot}
+- style change in opening files from open(F, $f) to open(_)
+
 2.006  2002/12/16 19:00:00
- - Fix -make-maker option bug.
- - Avoid full range of the MakeMaker bug.
-   5.91_01 <= ExtUtils::MakeMaker <= 6.05
- - Add MakeMaker check to spec for RH 8.0.
+- Fix -make-maker option bug.
+- Avoid full range of the MakeMaker bug.
+  5.91_01 <= ExtUtils::MakeMaker <= 6.05
+- Add MakeMaker check to spec for RH 8.0.
 
 2.005  2002/12/12 17:00:00
 - Added -V option to return cpan2rpm version.

@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = 2.006;
+$VERSION = 2.007;
 
 # --- prologue ----------------------------------------------------------------
 
@@ -144,6 +144,9 @@ sub init {
         #
 
         get_url($RPMDIR{SOURCES}, $info{module});
+		
+        $info{module} =~ s|.*/||;     # remove path
+        $info{module} =~ s/-(\d+\.?\d*)\.(tar\.g?z|tgz).*//;
         }
 
     elsif (istarball($info{module}, 1)) {
@@ -336,7 +339,7 @@ sub mk_spec {
         # Known bug in 5.91_01 - 6.05:
         # Must do "perl Makefile.PL PREFIX=foo"
         # since it is ignored on the "make install" line.
-        $info{"make-maker"} .= ' PREFIX=$RPM_BUILD_ROOT%{_prefix}'
+        $info{"make-maker"} .= ' PREFIX=%{buildroot}%{_prefix}'
             unless $info{"make-maker"} =~ /PREFIX=/;
         }
     if ($info{"shadow-pure"}) {
@@ -400,22 +403,22 @@ sub mk_spec {
         $info{maketest}
 
         %install
-        [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
+        [ "%{buildroot}" != "/" ] && rm -rf %{buildroot}
         $info{"no-requires"}{"install"}
 
-        %{makeinstall} PREFIX=\$RPM_BUILD_ROOT%{_prefix} $info{"make-install"}
+        %{makeinstall} PREFIX=%{buildroot}%{_prefix} $info{"make-install"}
 
         [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 
-        find \$RPM_BUILD_ROOT -name "perllocal.pod" \\
+        find %{buildroot} -name "perllocal.pod" \\
             -o -name ".packlist"                    \\
             -o -name "*.bs"                         \\
             |xargs -i rm -f {}
 
-        find \$RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir {} \\; 2>/dev/null
+        find %{buildroot}%{_prefix} -type d -depth -exec rmdir {} \\; 2>/dev/null
 
         %clean
-        [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
+        [ "%{buildroot}" != "/" ] && rm -rf %{buildroot}
         $info{"no-requires"}{"clean"}
 
         %files
@@ -605,14 +608,14 @@ sub getrpm_macdef($) {
 
 sub getrpm_macros {
     local $_ = shift || $_;
-    open(F, $_) || die $!;
+    open(_) || die $!;
     my %ret = ();
-    for (<F>) {
+    for (<_>) {
         next unless s/^%//;
         split;
         $ret{$_[0]} = $_[1];
         }
-    close(F);
+    close(_);
     return %ret;
     }
 
@@ -689,14 +692,14 @@ sub untar($) {
 #    file does not exist
 #
 
-sub readfile($) {
-    my $f = shift;
-    return undef unless -r $f;
+sub readfile {
+    local $_ = shift || $_;
+    return undef unless -r;
 
     local $/ = undef;
-    open(F, $f) || die "$! [$f].  Stopped ";
-    local $_ = <F>;
-    close(F);
+    open(_) || die "$! [$_].  Stopped ";
+    $_ = <_>;
+    close(_);
     $_;
     }
 
@@ -1082,6 +1085,6 @@ F<http://perl.arix.com/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.15 2002/12/16 23:40:35 bbb Exp $
+$Id: cpan2rpm,v 2.17 2002/12/17 21:07:45 ekkis Exp $
 
 =cut

@@ -6,7 +6,7 @@
 
 use vars qw($VERSION);
 BEGIN {
-  $VERSION = (split / /, q$Revision: 1.79 $ )[1];
+  $VERSION = (split / /, q$Revision: 1.82 $ )[1];
 }
 
 # --- prologue ----------------------------------------------------------------
@@ -68,15 +68,15 @@ sub init {
         ,    "requires=s"       => "packages required for installation"
         ,    "provides=s"       => "modules provided by the package"
         ,    "no-requires=s"    => "suppresses generation of a set of reqs"
-        ,    "req-scan-all"		=> "scan all files in a tarball for reqs"
+        ,    "req-scan-all"     => "scan all files in a tarball for reqs"
         ,    "find-provides=s"  => "instructs us to use a given filter"
         ,    "find-requires=s"  => "(see man page for further details)"
         ,    "spec-only"        => "only displays spec file to stdout"
         ,    "make-maker=s"     => "arguments for makefile creation"
         ,    "make=s"           => "arguments passed to make"
-        ,    "make-no-test"		=> "suppress running test suite"
+        ,    "make-no-test"     => "suppress running test suite"
         ,    "make-install=s"   => "arguments for make install"
-        ,    "no-clean"			=> "suppress --clean"
+        ,    "no-clean"         => "suppress --clean"
         ,    "patch|p=s@"       => "specifies (multiple) patches to apply"
         ,    "install|i"        => "install package when done"
         ,    "description=s"    => "package description"
@@ -89,15 +89,15 @@ sub init {
     # get user options
     my %opts = ();
     my $ret = GetOptions(\%opts, keys %desc);
-    print "\n-- cpan2rpm - Ver: $::VERSION --\n\n" if !$opts{"spec-only"}; 
+    print "\n-- cpan2rpm - Ver: $::VERSION --\n\n" if !$opts{"spec-only"};
     syntax(\%desc) if defined $opts{help} || !$ret;
 
     # override defaults with user options
     %info = (%info, %opts);
 
-	# set requirements patch override
+    # set requirements patch override
 
-	$ENV{CPAN2RPM_REQ_ALL} = $info{"req-scan-all"};
+    $ENV{CPAN2RPM_REQ_ALL} = $info{"req-scan-all"};
 
     # get module name
     $info{module} = shift @ARGV
@@ -325,7 +325,7 @@ sub mk_spec {
     my $pkgname = $info{pkgname};
     $pkgname = "perl-" . $pkgname unless $info{nopkgprfx};
     $info{description} =~ s/\s+$//;
-	$info{maketest} = "%{__make} test" unless $info{"make-no-test"};
+    $info{maketest} = "%{__make} test" unless $info{"make-no-test"};
 
     local $_ = <<ZZ;
         #
@@ -373,7 +373,7 @@ sub mk_spec {
 
         %build
         CFLAGS="\$RPM_OPT_FLAGS"
-        %{__perl} Makefile.PL $info{"make-maker"}
+        %{__perl} Makefile.PL PREFIX=\$RPM_BUILD_ROOT%{_prefix} $info{"make-maker"}
         %{__make} $info{"make"}
         $info{maketest}
 
@@ -383,7 +383,7 @@ sub mk_spec {
 
         eval `perl '-V:installarchlib'`
         mkdir -p \$RPM_BUILD_ROOT/\$installarchlib
-		%{makeinstall} PREFIX=\$RPM_BUILD_ROOT%{_prefix} $info{"make-install"}
+        %{makeinstall} $info{"make-install"}
 
         [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 
@@ -392,7 +392,7 @@ sub mk_spec {
             -o -name "*.bs"                         \\
             |xargs -i rm -f {}
 
-		find \$RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir {} \\;
+        find \$RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir --ignore-fail-on-non-empty {} \\;
 
         %clean
         [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
@@ -438,7 +438,7 @@ sub mk_rpm {
     warn("RPM test unpacking failed!") if $ret = $? >> 8;
 
     if ($ret == 0) {
-		my $clean = $info{"no-clean"} ? "" : "--clean";
+        my $clean = $info{"no-clean"} ? "" : "--clean";
         system("rpmbuild -ba $clean $info{spec}");
         warn("RPM build failed!") if $ret = $? >> 8;
         }
@@ -689,6 +689,7 @@ sub writefile($@) {
     local $_ = shift || $_;
 
     open (FILE, "> $fn") || die "writefile('$fn'): $!. Stopped";
+    binmode(FILE);
     print FILE;
     close(FILE);
     $fn;
@@ -957,7 +958,7 @@ This option allows passing a string to the MakeMaker process (i.e. perl Makefile
 
 Arguments supplied here get passed directly to the make process.
 
-=item I<--make-no-test=C<string-value>>
+=item I<--make-no-test>
 
 Use this option to suppress running a module's test suite during build.
 
@@ -1031,6 +1032,32 @@ This utility is free and distributed under GPL, the Gnu Public License.
 =head1 CHANGES
 
 $Log: cpan2rpm,v $
+Revision 1.82  2002/11/20 01:11:15  bbb
+Need binmode file handles to avoid corrupting tarball contents.
+Tested and it finally works with perl 5.8.0 (RedHat 8.0) distro.
+
+Revision 1.81  2002/11/19 23:39:32  bbb
+Move PREFIX=... from "make install" part to "perl Makefile.PL" part
+in order to comply with perl 5.8.0 MakeMaker (RedHat 8.0).
+
+Revision 1.80  2002/11/18 15:39:12  bbb
+Add --ignore-fail-on-non-empty to avoid this spewage:
+
++ find /var/tmp/perl-Net-DNS-0.31-rob/usr -type d -depth -exec rmdir '{}' ';'
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1/Net/DNS/RR': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1/Net/DNS': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1/Net': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl/5.6.1': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5/site_perl': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib/perl5': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/lib': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/share/man/man3': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/share/man': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr/share': Directory not empty
+rmdir: `/var/tmp/perl-Net-DNS-0.31-rob/usr': Directory not empty
+
+Fix --make-no-test doc typo.
+
 Revision 1.79  2002/11/16 03:29:44  ekkis
 - added --make-no-test
 - small patch to README

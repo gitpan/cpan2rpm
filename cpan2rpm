@@ -6,7 +6,7 @@
 
 use vars qw($VERSION);
 BEGIN {
-  $VERSION = (split / /, q$Revision: 1.77 $ )[1];
+  $VERSION = (split / /, q$Revision: 1.79 $ )[1];
 }
 
 # --- prologue ----------------------------------------------------------------
@@ -68,11 +68,13 @@ sub init {
         ,    "requires=s"       => "packages required for installation"
         ,    "provides=s"       => "modules provided by the package"
         ,    "no-requires=s"    => "suppresses generation of a set of reqs"
+        ,    "req-scan-all"		=> "scan all files in a tarball for reqs"
         ,    "find-provides=s"  => "instructs us to use a given filter"
         ,    "find-requires=s"  => "(see man page for further details)"
         ,    "spec-only"        => "only displays spec file to stdout"
         ,    "make-maker=s"     => "arguments for makefile creation"
         ,    "make=s"           => "arguments passed to make"
+        ,    "make-no-test"		=> "suppress running test suite"
         ,    "make-install=s"   => "arguments for make install"
         ,    "no-clean"			=> "suppress --clean"
         ,    "patch|p=s@"       => "specifies (multiple) patches to apply"
@@ -87,12 +89,15 @@ sub init {
     # get user options
     my %opts = ();
     my $ret = GetOptions(\%opts, keys %desc);
-    print "\n-- cpan2rpm - Ver: $::VERSION --\n\n" if !$opts{"spec-only"};
-
+    print "\n-- cpan2rpm - Ver: $::VERSION --\n\n" if !$opts{"spec-only"}; 
     syntax(\%desc) if defined $opts{help} || !$ret;
 
     # override defaults with user options
     %info = (%info, %opts);
+
+	# set requirements patch override
+
+	$ENV{CPAN2RPM_REQ_ALL} = $info{"req-scan-all"};
 
     # get module name
     $info{module} = shift @ARGV
@@ -320,6 +325,7 @@ sub mk_spec {
     my $pkgname = $info{pkgname};
     $pkgname = "perl-" . $pkgname unless $info{nopkgprfx};
     $info{description} =~ s/\s+$//;
+	$info{maketest} = "%{__make} test" unless $info{"make-no-test"};
 
     local $_ = <<ZZ;
         #
@@ -369,7 +375,7 @@ sub mk_spec {
         CFLAGS="\$RPM_OPT_FLAGS"
         %{__perl} Makefile.PL $info{"make-maker"}
         %{__make} $info{"make"}
-        %{__make} test
+        $info{maketest}
 
         %install
         [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
@@ -935,6 +941,10 @@ Indicates packages that should be required for installation.  This option works 
 
 Suppresses generation of a given required dependency.  Sometimes authors create dependencies on modules the packager can't find, sometimes RPM generates spurious dependencies.  This option allows the packager to arbitrarily supress a given requirement.  The value may be a comma-separated list.
 
+=item I<--req-scan-all>
+
+By default, the I<rpm-build> requirements script scans all files in a tarball for requirements information.  As this may on occasion generate requirements on the produced rpm that belong only to sample programs or other files not critical to the module being installed, we provide a patch the user may apply (included in this distribution as F<perl.req.patch>) which causes dependencies to be harvested from only F<.pm> files.  When this patch is installed, this switch reverses the behaviour, causing I<cpan2rpm> to scan all files as originall intended.
+
 =item I<--spec-only>
 
 This option instructs the script to not build the RPM package but instead to only display the generated spec file on stdout.
@@ -943,9 +953,13 @@ This option instructs the script to not build the RPM package but instead to onl
 
 This option allows passing a string to the MakeMaker process (i.e. perl Makefile.PL <your-arguments-here>)
 
-=item I<--maker=C<string-value>>
+=item I<--make=C<string-value>>
 
 Arguments supplied here get passed directly to the make process.
+
+=item I<--make-no-test=C<string-value>>
+
+Use this option to suppress running a module's test suite during build.
 
 =item I<--make-install=C<string-value>>
 
@@ -1017,6 +1031,14 @@ This utility is free and distributed under GPL, the Gnu Public License.
 =head1 CHANGES
 
 $Log: cpan2rpm,v $
+Revision 1.79  2002/11/16 03:29:44  ekkis
+- added --make-no-test
+- small patch to README
+
+Revision 1.78  2002/11/15 18:31:47  ekkis
+- included rpm-build patch submitted by Hook-BOT
+- added --req-scan-all
+
 Revision 1.77  2002/11/14 02:54:57  ekkis
 minor fix for new find (needed \\; for -exec)
 

@@ -7,7 +7,7 @@
 %define NVR %{pkgname}-%{version}-%{release}
 Summary:       cpan2rpm - A Perl module packager
 Name:          cpan2rpm
-Version:       1.77
+Version:       1.79
 Release:       1
 Group:         Applications/CPAN
 Distribution:  Red Hat Linux release 7.0 (Guinness)
@@ -29,7 +29,7 @@ The script can operate on local files, urls and CPAN module names.  Install this
 # please visit: http://perl.arix.com/
 #
 %prep
-%setup -q -n cpan2rpm-1.77 
+%setup -q -n cpan2rpm-1.79 
 %build
 CFLAGS="$RPM_OPT_FLAGS"
 %{__perl} Makefile.PL 
@@ -53,5 +53,5 @@ find $RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir {} \;
 %doc README
 %{_prefix}
 %changelog
-* Wed Nov 13 2002 ekkis@beowulf
+* Fri Nov 15 2002 ekkis@beowulf
 - Initial build.

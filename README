@@ -6,12 +6,20 @@ The script can operate on local files, urls and CPAN module names.  Install this
 
 NOTES:
 
-cpan2rpm can fetch tarballs from URLs.  To do this the HTTP::Lite module needs to be installed.  You can get an RPM of this module from our web site (the source RPM is also available) but should the package not be available for your platform you can also bootstrap it like this (thanks to Jim Radford for this suggestion):
+1) cpan2rpm can fetch tarballs from URLs.  To do this it needs either LWP installed, or the HTTP::Lite module.  If neither of these is available, the system will try various external programs e.g. lynx, ncftp, etc.  You can get an RPM of HTTP::Lite from our web site (the source RPM is also available) but should the package not be available for your platform you can also bootstrap it like this (thanks to Jim Radford for this suggestion):
 
 # ./cpan2rpm  HTTP::Lite
 # rpm -U .../HTTP-Lite-<version-release.arch>.rpm
 # ./cpan2rpm cpan2rpm-1.49.tar.gz
 # rpm -U .../cpan2rpm-1.49-1.i386.rpm
+
+2) Additionally, to fix a problem with the rpm-build dependency generator, we've included the file perl.req.patch which may need be applied as root.  For further information please see the docs for the --req-scan-all switch.  The patch may be applied as follows:
+
+	sudo patch -p0 < perl.req.patch
+
+3) Finally, for dependencies to work the RH requirements script must be executable (at the time of this writing rpm-build ships without this script in the correct mode).  You can do this with: 
+
+	sudo chmod +x /usr/lib/rpm/perl.req
 
 DOCUMENTATION:
 

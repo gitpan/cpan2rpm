@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = 2.005;
+$VERSION = 2.006;
 
 # --- prologue ----------------------------------------------------------------
 
@@ -217,7 +217,7 @@ sub get_meta {
         };
 
     local $_ = qq/package make; no strict; local (*STDOUT, *STDERR) = (); /;
-    $_ .= qq/$ARGV[0] = $info{"make-maker"}; / if $info{"make-maker"};
+    $_ .= qq/\$ARGV[0] = q{$info{"make-maker"}}; / if $info{"make-maker"};
     $_ .= readfile("Makefile.PL");
     s/(qw\(.*)WriteMakefile(.*\))/$1$2/g;
     s/(ExtUtils::MakeMaker::)?WriteMakefile/::MyWriteMakefile/g;
@@ -331,12 +331,13 @@ sub mk_spec {
     $pkgname = "perl-" . $pkgname unless $info{nopkgprfx};
     $info{description} =~ s/\s+$//;
     $info{maketest} = "%{__make} test" unless $info{"make-no-test"};
-    if ($ExtUtils::MakeMaker::VERSION == 6.03) {
-        # Known bug in 6.03: PREFIX=... does not work with "make install" line.
-        $info{"make-maker"} .= ' PREFIX=$RPM_BUILD_ROOT%{_prefix}';
-        }
-    else {
-        $info{"make-install"} .= ' PREFIX=$RPM_BUILD_ROOT%{_prefix}';
+
+    if ($ExtUtils::MakeMaker::VERSION =~ /5.9[1-6]|6.0[0-5]/) {
+        # Known bug in 5.91_01 - 6.05:
+        # Must do "perl Makefile.PL PREFIX=foo"
+        # since it is ignored on the "make install" line.
+        $info{"make-maker"} .= ' PREFIX=$RPM_BUILD_ROOT%{_prefix}'
+            unless $info{"make-maker"} =~ /PREFIX=/;
         }
     if ($info{"shadow-pure"}) {
         $info{"make-maker"} .= q{
@@ -402,7 +403,7 @@ sub mk_spec {
         [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
         $info{"no-requires"}{"install"}
 
-        %{makeinstall} $info{"make-install"}
+        %{makeinstall} PREFIX=\$RPM_BUILD_ROOT%{_prefix} $info{"make-install"}
 
         [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 
@@ -1081,6 +1082,6 @@ F<http://perl.arix.com/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.11 2002/12/12 23:35:40 bbb Exp $
+$Id: cpan2rpm,v 2.15 2002/12/16 23:40:35 bbb Exp $
 
 =cut

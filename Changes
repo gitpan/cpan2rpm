@@ -1,5 +1,11 @@
 Revision history for cpan2rpm
 
+2.006  2002/12/16 19:00:00
+ - Fix -make-maker option bug.
+ - Avoid full range of the MakeMaker bug.
+   5.91_01 <= ExtUtils::MakeMaker <= 6.05
+ - Add MakeMaker check to spec for RH 8.0.
+
 2.005  2002/12/12 17:00:00
 - Added -V option to return cpan2rpm version.
 - Added --shadow-pure option to hide previous

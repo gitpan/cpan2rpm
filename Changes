@@ -1,5 +1,37 @@
 Revision history for cpan2rpm
 
+2.023 02/25/04 16:28:35
+- applied sourceforge patch #903878 which fixes --make-no-test for Module::Build
+  Thanks again Stephen Clouse!
+- implemented feature request reported as sourceforge bug #851256 which
+  correctly calculates the proper value for the architecture of a package.
+  Thanks to Erik Wasser for this recommendation.
+- finally fixed sourceforge bug #709640!
+  Thanks to ratness for pointing this out.
+- applied sourceforge patch reported as bug #871766 having to do with
+  whitespace returned in calls to RPM for directory structure
+- applied sourceforge patch #890063 - thanks to Stephen for a better approach
+- applied sourceforge patch #890038.  Our thanks to Stephen Clouse.
+- applied sourceforge patch #890041 - thanks to Stephen Clouse for finding
+  this problem!
+- moved functionality to check directories to chkdirs()
+- added debug() + a few calls
+
+2.022 12/22/03 21:56:23
+- added support for modifying %defattr tag in spec file. Thanks to
+  Richard Zidlicky <rz@linux-m68k.org> for suggesting this. (ekkis)
+- better, more informative handling of crashes during PL compilation (bbb)
+- fixed sourceforge bug #824068 (ekkis)
+- release tag now allows alphanumerics. thanks to Dano Carroll for
+  pointing this out in sourceforge bug #739492 (ekkis)
+- fixed sourceforge bug #739525 - Thanks to Dano Carroll for this one (ekkis)
+- fix for spec Patch lines - Thanks to Matthew Brian Hall
+  [hallmat3@pilot.msu.edu] for providing the patch (ekkis)
+- fixed problem with GPG signatures.  Thanks to Paul Gear for pointing
+  out the problem as sourceforge bug #801593 (ekkis)
+- added support for configuration file - patch submitted by
+  Toni Willberg as sourceforge bug #708132 (ekkis)
+
 2.021 11/17/2003 01:40:54
 - added support for Module::Build as an installer (required by some
   modules e.g. Config::Natural) - thx Richard Bos [radoeka@xs4all.nl]

@@ -3,6 +3,12 @@
 
 use strict;
 
+my $reqs = join ";"
+    , qq([ -e /etc/SuSE-release -o -e /etc/UnitedLinux-release ] && SuSE=1)
+    , qq(ver=`rpm -q rpm --qf %%{version}|awk -F . '{print \$1}'`)
+    , qq([ \$ver -le 3 -o -s \$SuSE ] && echo rpm || echo rpm-build)
+    ;
+
 my @cmd = (
     $^X,
     "./cpan2rpm",
@@ -10,7 +16,7 @@ my @cmd = (
     "--force",
     "--spec-only",
     "--spec", "./cpan2rpm.spec",
-    "--requires", q{ %([ `rpm -q rpm --qf %%{version}|awk -F . '{print $1}'` -gt 3 ] && echo rpm-build || echo rpm)},
+    "--requires", "%($reqs)",
     "--no-prfx",
     "--buildarch=noarch",
     "--doc", "perl.req.patch",

@@ -7,6 +7,7 @@ WriteMakefile
   ABSTRACT_FROM => "cpan2rpm",
   EXE_FILES => [ "cpan2rpm" ],
   PREREQ_PM => { # e.g., Module::Name => 1.1
+    'ExtUtils::MakeMaker' => 5.45,
     'LWP::UserAgent' => 0,
     'HTTP::Request' => 0,
   },

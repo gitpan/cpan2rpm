@@ -1,5 +1,10 @@
 Revision history for cpan2rpm
 
+2.008  2002/12/18 23:00:00
+- Now requires ExtUtils::MakeMaker >= 5.45.
+- Removed all makemaker version dependant workaround hacks.
+  Code by Axel.Thimm@physik.fu-berlin.de (Axel Thimm)
+
 2.007  2002/12/17 20:35:48
 - fixed problem with building packages that define neither DISTNAME nor NAME in the call to MakeMaker(), resulting in an unwriteable filename which included a given url.  Thanks to Rainer Lay for pointing this out.  the script broke building the C<Class-MethodMaker> package.
 - changed all references to $RPM_BUILD_ROOT to the more flexible %{buildroot}

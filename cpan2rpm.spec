@@ -7,7 +7,7 @@
 %define NVR %{pkgname}-%{version}-%{release}
 Summary:       cpan2rpm - A Perl module packager
 Name:          cpan2rpm
-Version:       2.007
+Version:       2.008
 Release:       1
 Group:         Applications/CPAN
 Distribution:  Red Hat Linux release 7.0 (Guinness)
@@ -29,15 +29,15 @@ The script can operate on local files, urls and CPAN module names.  Install this
 # please visit: http://perl.arix.com/
 #
 %prep
-%setup -q -n cpan2rpm-2.007 
+%setup -q -n cpan2rpm-2.008 
 %build
 CFLAGS="$RPM_OPT_FLAGS"
-%{__perl} Makefile.PL `%{__perl} -MExtUtils::MakeMaker -e 'print @ARGV if $ExtUtils::MakeMaker::VERSION =~ /5.9[1-6]|6.0[0-5]/;' PREFIX=$RPM_BUILD_ROOT%{_prefix}`
+%{__perl} Makefile.PL 'PREFIX=$(MYDESTDIR)%{_prefix}' 
 %{__make} 
 %{__make} test
 %install
 [ "%{buildroot}" != "/" ] && rm -rf %{buildroot}
-%{makeinstall} PREFIX=%{buildroot}%{_prefix} 
+%{makeinstall} MYDESTDIR=%{buildroot} 
 [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 find %{buildroot} -name "perllocal.pod" \
 -o -name ".packlist"                    \
@@ -51,5 +51,5 @@ find %{buildroot}%{_prefix} -type d -depth -exec rmdir {} \; 2>/dev/null
 %doc README Changes
 %{_prefix}
 %changelog
-* Tue Dec 17 2002 ekkis@beowulf
+* Wed Dec 18 2002 ekkis@beowulf
 - Initial build.

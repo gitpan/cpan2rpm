@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = 2.007;
+$VERSION = 2.008;
 
 # --- prologue ----------------------------------------------------------------
 
@@ -13,7 +13,7 @@ use strict;
 use Getopt::Long;
 use Sys::Hostname;
 use Config;
-use ExtUtils::MakeMaker;
+use ExtUtils::MakeMaker 5.45;
 
 # --- main() ------------------------------------------------------------------
 
@@ -335,13 +335,6 @@ sub mk_spec {
     $info{description} =~ s/\s+$//;
     $info{maketest} = "%{__make} test" unless $info{"make-no-test"};
 
-    if ($ExtUtils::MakeMaker::VERSION =~ /5.9[1-6]|6.0[0-5]/) {
-        # Known bug in 5.91_01 - 6.05:
-        # Must do "perl Makefile.PL PREFIX=foo"
-        # since it is ignored on the "make install" line.
-        $info{"make-maker"} .= ' PREFIX=%{buildroot}%{_prefix}'
-            unless $info{"make-maker"} =~ /PREFIX=/;
-        }
     if ($info{"shadow-pure"}) {
         $info{"make-maker"} .= q{
             # Force pure perl installs into first @INC slot
@@ -398,7 +391,7 @@ sub mk_spec {
 
         %build
         CFLAGS="\$RPM_OPT_FLAGS"
-        %{__perl} Makefile.PL $info{"make-maker"}
+        %{__perl} Makefile.PL 'PREFIX=\$(MYDESTDIR)%{_prefix}' $info{"make-maker"}
         %{__make} $info{"make"}
         $info{maketest}
 
@@ -406,7 +399,7 @@ sub mk_spec {
         [ "%{buildroot}" != "/" ] && rm -rf %{buildroot}
         $info{"no-requires"}{"install"}
 
-        %{makeinstall} PREFIX=%{buildroot}%{_prefix} $info{"make-install"}
+        %{makeinstall} MYDESTDIR=%{buildroot} $info{"make-install"}
 
         [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 
@@ -1085,6 +1078,6 @@ F<http://perl.arix.com/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.17 2002/12/17 21:07:45 ekkis Exp $
+$Id: cpan2rpm,v 2.22 2002/12/19 07:35:39 bbb Exp $
 
 =cut

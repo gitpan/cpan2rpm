@@ -28,7 +28,7 @@ after which the resulting package will be located in
 
 	/usr/src/redhat/RPMS/<your-platform-here>
 
-- NOTES -
+- NOTES & FIXES -
 
 1) cpan2rpm can fetch tarballs from URLs.  To do this it needs either LWP
 installed, or the HTTP::Lite module.  If neither of these is available, the
@@ -42,18 +42,29 @@ can also bootstrap it like this (thanks to Jim Radford for this suggestion):
 	./cpan2rpm cpan2rpm-1.49.tar.gz
 	rpm -Uvh .../cpan2rpm-1.49-1.i386.rpm
 
-2) Additionally, to fix a problem with the rpm-build dependency generator,
-we've included the file perl.req.patch which may need be applied as root.
+2) To fix a problem with the rpm-build dependency generator, we've
+included the file perl.req.patch which may need be applied as root.
 For further information please see the docs for the --req-scan-all switch.
 The patch may be applied as follows:
 
 	sudo patch -p0 < perl.req.patch
 
-3) Finally, for dependencies to work the RH requirements script must be
+3) For dependencies to work the RH requirements script must be
 executable (at the time of this writing rpm-build ships without this
 script in the correct mode).  You can do this with: 
 
 	sudo chmod +x /usr/lib/rpm/perl.req
+
+4) You may also encounter build problems if you are using a version
+of ExtUtils::MakeMaker between 5.91 and 6.05.  Much effort has gone
+into trying to make cpan2rpm work with differing versions of this
+module and the best solution is simply to upgrade.  Note: If you are
+running an earlier version of MakeMaker, you should not be required
+to upgrade.
+
+To upgrade, execute the following line:
+
+	./cpan2rpm --shadow-pure --install ExtUtils::MakeMaker
 
 - DOCUMENTATION -
 
@@ -63,6 +74,8 @@ For full documentation see the accompanying man page or refer to
 
 - SUPPORT -
 
-For help, please e-mail cpan2rpm@arix.com.  To subscribe to an
+For help, please e-mail ecalder@cpan.org.  To subscribe to an
 announcements mailing list, use the above address with the subject header
 "subscribe" (or "unsubscribe" as the case may be).
+
+$Id: README,v 2.6 2002/12/25 01:36:03 bbb Exp $

@@ -2,7 +2,7 @@ use ExtUtils::MakeMaker;
 
 WriteMakefile
   NAME => "cpan2rpm",
-  AUTHOR => 'Erick Calder <ekkis@cpan.org>',
+  AUTHOR => 'Erick Calder <ecalder@cpan.org>',
   VERSION_FROM => "cpan2rpm",
   ABSTRACT_FROM => "cpan2rpm",
   EXE_FILES => [ "cpan2rpm" ],

@@ -1,5 +1,33 @@
 Revision history for cpan2rpm
 
+2.009  2003/01/02 13:00:00
+- Backed out the Axel.Thimm code because of perl 5.6.0 problems.
+- Changed to use both PREFIX and DESTDIR.
+- Works with ExtUtils::MakeMaker < 5.91 and > 6.05
+  (Requires an upgrade for those versions in between.)
+- Add instructions on how to upgrade MakeMaker to README.
+- Our gratitude to Michal Jaegermann for pointing out and helping improve and fix the following issues:
+    - Changed the cpan2rpm rpm itself to be "noarch".
+    - Convert all system() calls from "single scalar" mode.
+    - Remove "Distribution:" from spec unless specified.
+    - Adjusted %files section to prevent the package from owning the
+      upper directories to reduce paranoia.
+    - Use File::Temp::tempdir instead of hard coded "/tmp/cpan2rpm" for
+      easier clean up and for security reasons.
+    - Replaced all getrpm_* functions with a shell call to rpm.
+      Now works with multi-line macros.
+    - The --spec-only sends contents to --spec setting instead of STDOUT.
+      This fixes a problem with modules that write to stdout for configuration
+      purposes which previously included that output in the spec file.
+- Our gratitude also to Anthony LaMark for suggesting the following issues whilst attempting to build Apache::SOAP:
+    - added support for PKZip archives and .bz2s
+    - now cleans up ctrl-Ms from Windoze-based distributions
+- More general --buildarch default setting.
+- Added --mk-rpm-dirs option to set up non-root user environments for package building.  This replaces the previous hack which used the ~/redhat directory.
+- Added --doc parameter to allow for additions to the %doc line in the %files section
+- reorganised POD to break options into logical groups
+- now creates a more generic spec file
+
 2.008  2002/12/18 23:00:00
 - Now requires ExtUtils::MakeMaker >= 5.45.
 - Removed all makemaker version dependant workaround hacks.

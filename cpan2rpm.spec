@@ -7,7 +7,7 @@
 %define NVR %{pkgname}-%{version}-%{release}
 Summary:       cpan2rpm - A Perl module packager
 Name:          cpan2rpm
-Version:       1.71
+Version:       1.77
 Release:       1
 Group:         Applications/CPAN
 Distribution:  Red Hat Linux release 7.0 (Guinness)
@@ -29,29 +29,29 @@ The script can operate on local files, urls and CPAN module names.  Install this
 # please visit: http://perl.arix.com/
 #
 %prep
-%setup -q -n cpan2rpm-1.71 
+%setup -q -n cpan2rpm-1.77 
 %build
 CFLAGS="$RPM_OPT_FLAGS"
-perl Makefile.PL 
-make 
+%{__perl} Makefile.PL 
+%{__make} 
+%{__make} test
 %install
 [ "$RPM_BUILD_ROOT" != "/" ] && rm -rf $RPM_BUILD_ROOT
 eval `perl '-V:installarchlib'`
 mkdir -p $RPM_BUILD_ROOT/$installarchlib
-make PREFIX=$RPM_BUILD_ROOT/usr install 
+%{makeinstall} PREFIX=$RPM_BUILD_ROOT%{_prefix} 
 [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 find $RPM_BUILD_ROOT -name "perllocal.pod" \
 -o -name ".packlist"                    \
 -o -name "*.bs"                         \
 |xargs -i rm -f {}
-find $RPM_BUILD_ROOT%{_prefix} -type d | tac | xargs rmdir --ign
+find $RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir {} \;
 %clean
 [ "$RPM_BUILD_ROOT" != "/" ] && rm -rf $RPM_BUILD_ROOT
-HERE=$(pwd); cd ..; rm -rf $HERE
 %files
 %defattr(-,root,root)
 %doc README
 %{_prefix}
 %changelog
-* Thu Nov 7 2002 ekkis@beowulf
+* Wed Nov 13 2002 ekkis@beowulf
 - Initial build.

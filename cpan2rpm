@@ -6,7 +6,7 @@
 
 use vars qw($VERSION);
 BEGIN {
-  $VERSION = (split / /, q$Revision: 1.71 $ )[1];
+  $VERSION = (split / /, q$Revision: 1.77 $ )[1];
 }
 
 # --- prologue ----------------------------------------------------------------
@@ -74,6 +74,7 @@ sub init {
         ,    "make-maker=s"     => "arguments for makefile creation"
         ,    "make=s"           => "arguments passed to make"
         ,    "make-install=s"   => "arguments for make install"
+        ,    "no-clean"			=> "suppress --clean"
         ,    "patch|p=s@"       => "specifies (multiple) patches to apply"
         ,    "install|i"        => "install package when done"
         ,    "description=s"    => "package description"
@@ -111,11 +112,16 @@ sub init {
         if ($info{install}) {
             print "\n-- NON ROOT install requires sudo rpm privileges --\n";
             if (system("sudo rpm -v")) {
-                die "sudo failed: CANNOT USE --install OPTION!";
+                print "You can configure sudo with the following command:\n\n";
+                print "  echo ".getlogin()." ALL=/bin/rpm >> /etc/sudoers\n\n";
+                die "sudo failed: CANNOT USE --install OPTION!  Stopped";
+                }
+            else {
+                print "\n-- NON ROOT sudo precheck successful.\n";
                 }
             }
-        }
 
+        }
     $RPMDIR{SOURCES} = getrpm_macdef("_sourcedir");
     $RPMDIR{RPMS} = getrpm_macdef("_rpmdir");
     $RPMDIR{SRPMS} = getrpm_macdef("_srcrpmdir");
@@ -361,8 +367,9 @@ sub mk_spec {
 
         %build
         CFLAGS="\$RPM_OPT_FLAGS"
-        perl Makefile.PL $info{"make-maker"}
-        make $info{"make"}
+        %{__perl} Makefile.PL $info{"make-maker"}
+        %{__make} $info{"make"}
+        %{__make} test
 
         %install
         [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
@@ -370,7 +377,7 @@ sub mk_spec {
 
         eval `perl '-V:installarchlib'`
         mkdir -p \$RPM_BUILD_ROOT/\$installarchlib
-        make PREFIX=\$RPM_BUILD_ROOT/usr install $info{"make-install"}
+		%{makeinstall} PREFIX=\$RPM_BUILD_ROOT%{_prefix} $info{"make-install"}
 
         [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 
@@ -379,12 +386,11 @@ sub mk_spec {
             -o -name "*.bs"                         \\
             |xargs -i rm -f {}
 
-        find \$RPM_BUILD_ROOT%{_prefix} -type d | tac | xargs rmdir --ign
+		find \$RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir {} \\;
 
         %clean
         [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
         $info{"no-requires"}{"clean"}
-        HERE=\$(pwd); cd ..; rm -rf \$HERE
 
         %files
         %defattr(-,root,root)
@@ -426,7 +432,8 @@ sub mk_rpm {
     warn("RPM test unpacking failed!") if $ret = $? >> 8;
 
     if ($ret == 0) {
-        system("rpmbuild -ba $info{spec}");
+		my $clean = $info{"no-clean"} ? "" : "--clean";
+        system("rpmbuild -ba $clean $info{spec}");
         warn("RPM build failed!") if $ret = $? >> 8;
         }
 
@@ -462,7 +469,18 @@ sub searchcpan {
     # XXX - This algorithm may change as the
     # search.cpan.org web site output changes.
     $@ = ""; eval "use HTTP::Request::Common; use LWP::UserAgent;";
-    if (!$@) {
+    if ($@) {
+        # Could not load libwww-perl
+        print "-- WARNING: libwww-perl module not found!\n";
+        print "-- Install libwww-perl to avoid this warning.\n";
+        print "-- One of the following options may help:\n";
+        print "--   1) Try http://www.rpmfind.net/linux/rpm2html/search.php?query=perl-libwww-perl\n";
+        print "--   2) Specify the full URL of the tarball manually.\n";
+        print "--   3) Download tarball and specify file on commandline.\n";
+        print "--   4) Configure CPAN:  perl -MCPAN -eshell\n";
+        print "--   5) cpan2rpm --install libwww-perl\n";
+        }
+    else {
         my $dist = $info{module};
         $dist =~ s/::/-/g;
         my $dist_url = "http://search.cpan.org/dist/$dist/";
@@ -712,7 +730,38 @@ sub get_url($@) {
         writefile("$d/$info{tarball}", $http->body());
         return;
         }
-    die $@;
+
+    # Could not load libwww-perl
+    print "-- WARNING: libwww-perl module not found!\n";
+    print "-- Install libwww-perl to avoid this warning: cpan2rpm --install libwww-perl\n";
+    print "-- Trying wget...\n";
+    if (-e "/usr/bin/wget" && !system("wget --directory-prefix=$d $info{source}")) {
+        print "-- Success!\n";
+        return;
+        }
+    print "-- Trying lynx...\n";
+    if (-e "/usr/bin/lynx" && !system("lynx -source $info{source} > $info{tarball} && mv $info{tarball} $d/$info{tarball}")) {
+        print "-- Success!\n";
+        return;
+        }
+    print "-- Trying links...\n";
+    if (-e "/usr/bin/links" && !system("links -source $info{source} > $info{tarball} && mv $info{tarball} $d/$info{tarball}")) {
+        print "-- Success!\n";
+        return;
+        }
+    print "-- Trying ncftpget...\n";
+    if (-e "/usr/bin/ncftpget") {
+        if ($info{source} =~ m%^ftp://%i) {
+            if (!system("ncftpget $info{source} && mv $info{tarball} $d/$info{tarball}")) {
+                print "-- Success!\n";
+                return;
+                }
+            }
+        else {
+            print "-- Use the ftp:// url instead of $info{source}\n";
+            }
+        }
+    die "-- External program download failed.  Manual download required.  Stopped";
     }
 
 # --- miscellany --------------------------------------------------------------
@@ -902,6 +951,10 @@ Arguments supplied here get passed directly to the make process.
 
 Allows user to supply arguments to the make install process.
 
+=item I<--no-clean>
+
+By default, the system passes I<--clean> to I<rpmbuild>, thus removing the unpacked sources from the BUILD directory.  This option suppresses that functionality.
+
 =item I<--patch=C<string-value>>
 
 This option allows specifying patch files to be inserted into the spec file and applied when building the source.  Please note the option may be used multiple time to specify multiple patches.
@@ -937,6 +990,8 @@ For further information please refer to the CPAN manpage.
 
 For now, the list below is what's awaits my attention, but I'm happy to work on any feature requests you may have :)
 
+1. should really have an /etc file + ~/.cpan2rpm
+
 =head1 BUGS
 
 Same goes for bugs.
@@ -962,6 +1017,33 @@ This utility is free and distributed under GPL, the Gnu Public License.
 =head1 CHANGES
 
 $Log: cpan2rpm,v $
+Revision 1.77  2002/11/14 02:54:57  ekkis
+minor fix for new find (needed \\; for -exec)
+
+Revision 1.76  2002/11/14 02:26:22  ekkis
+thanks to Axel Thimm (Axel.Thimm@physik.fu-berlin.de) for the following suggestions:
+- added --no-clean
+- generalised calls to make, perl and other external programs with %{__make} macros, etc.
+- replaced find call to require fewer external program dependencies
+
+Revision 1.75  2002/11/08 20:24:06  bbb
+Should "make test" too.
+Maybe there should be an option to skip the "make test"?
+
+Revision 1.74  2002/11/08 19:48:45  bbb
+If libwww-perl is not installed,
+show helpful warning,
+then try some external programs:
+wget, lynx, links, ncftpget
+in that order.
+And fix compile error from last commit.  :-)
+
+Revision 1.73  2002/11/08 18:12:45  bbb
+sudo success notification also.
+
+Revision 1.72  2002/11/08 17:52:45  bbb
+Explain how to configure sudo if needed.
+
 Revision 1.71  2002/11/07 23:21:25  ekkis
 wiped TODO since Rob knocked it out
 

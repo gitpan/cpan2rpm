@@ -20,7 +20,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.024";
+$VERSION = "2.025";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -43,7 +43,7 @@ my $SPECCOL = 10;   # col width for generated spec files
 init();             # initialise stuff
 
 for (@ARGV) {
-    $_ = get_mod(); # retrieve a module to work with
+    get_mod();      # retrieve a module to work with
     get_meta();     # get metadata from tarball
     mk_spec();      # create a custom spec file
     mk_rpm();       # build the RPM
@@ -133,6 +133,7 @@ sub init {
         "install|i"       => "install package when done",
         "force"           => "forces all operations",
         # -- miscellaneous options
+        "fetch=s"         => "fetch method for modules",
         "modules|f=s"     => "file containing module list",
         "mk-rpm-dirs=s"   => "creates RPM dirs for non-root users",
         "sign-setup:s"    => "sets up RPM to support signatures",
@@ -241,6 +242,35 @@ sub init {
 
     $info{buildarch} ||= $RPMDIR{ARCH};
 
+    # set module download method
+
+    my %cpan = (
+        plus => \&get_cpan_plus,
+        old => \&get_cpan_old,
+        web => \&get_cpan_web
+        );
+
+    if ($info{fetch}) {
+        $info{fetch} = lc($info{fetch});
+        die "Invalid fetch method specified.  See man page for --cpan\nStopped"
+            unless $info{fetch} =~ /plus|old|web/;
+        $info{get_mod} = $info{fetch};
+        }
+    elsif ($@ = "", eval q/use CPANPLUS::Backend/, !$@) {
+        print "CPAN+ found\n";
+        $info{get_mod} = "plus";
+        }
+    elsif ($@ = "", eval q/use CPAN 0.59/, !$@) {
+        print "CPAN+ not found - using old interface\n";
+        $info{get_mod} = "old";
+        }
+    else {
+        print "No CPAN modules found - using web interface\n";
+        $info{get_mod} = "web";
+        }
+
+    $info{get_mod} = $cpan{$info{get_mod}};
+
     # set requirements patch override
 
     $ENV{CPAN2RPM} = 1;
@@ -279,40 +309,39 @@ sub init {
 #
 
 sub get_mod {
-    my $dist = shift || $_ || die "get_mod(): no args!";
+    my %ret = %info;
+    $ret{dist} = shift || $_ || die "get_mod(): no args!";
+    $ret{dist} = $CWD if $ret{dist} eq ".";
 
-    print "*\n*\t$dist\n*\n";
-
-    my %ret = %info;                          # inherit user prefs
-    $dist = $ret{dist} = searchcpan($dist);   # look on the web first
+    print "\n-- module: $ret{dist} --\n";
 
     #
     #    a url was passed
     #
 
-    if (isurl($dist)) {
-        $ret{tarball} = write_url($RPMDIR{SOURCES}, $dist)
+    if (isurl($ret{dist})) {
+        $ret{tarball} = write_url($RPMDIR{SOURCES}, $ret{dist})
             || die "Unable to retrieve tarball";
-        push @{$ret{source}}, $dist;
+        push @{$ret{source}}, $ret{dist};
         }
 
     #
     #    argument passed is a local file name
     #
 
-    elsif (istarball($dist, 1)) {
-        cp($dist, $RPMDIR{SOURCES})
-            || die "get_mod(): cp [$dist] - $!"
+    elsif (istarball($ret{dist}, 1)) {
+        cp($ret{dist}, $RPMDIR{SOURCES})
+            || die "get_mod(): cp [$ret{dist}] - $!"
             ;
-        ($ret{tarball} = $dist) =~ s|.*/||;
+        ($ret{tarball} = $ret{dist}) =~ s|.*/||;
         }
 
     #
     #   argument passed is a directory
     #
 
-    elsif (-d $dist) {
-        $dist = $CWD if $dist eq ".";
+    elsif (-d $ret{dist}) {
+        chdir $ret{dist};
         }
 
     #
@@ -320,10 +349,11 @@ sub get_mod {
     #
 
     else {
-        $ret{tarball} = get_cpan(\%ret);
+        $ret{tarball} = $ret{get_mod}(\%ret);
         }
 
-    wantarray() ? %ret : \%ret;
+    local $_ if defined wantarray();
+    $_ = wantarray() ? %ret : \%ret;
     }
 
 sub get_meta {
@@ -337,22 +367,22 @@ sub get_meta {
         my $f = "$RPMDIR{SOURCES}/$info->{tarball}";
         print "Tarball extraction: [$f]\n";
         $info->{evaldir} = untar($f);
+        }
 
-        eval "use File::Find";
-        if ($@) {
-            local $_ = "Cannot automatically determine architecture for\n";
-            $_ .= "package, defaulting to %_arch macro (this value\n";
-            $_ .= "may be overridden with the --buildarch parameter.\n";
-            $_ .= "Please install File::Find to allow for automatic\n";
-            $_ .= "arch selection.";
-            $_ .= "\n$@" if $info->{debug};
-            print;
-            }
-        else {
-            my $xs = 0;
-            find(sub { $xs = 1 if /\.(xs|c)$/i }, $info->{evaldir});
-            $info->{buildarch} = "noarch" if $xs == 0;
-            }
+    eval "use File::Find";
+    if ($@) {
+        local $_ = "Cannot automatically determine architecture for\n";
+        $_ .= "package - defaulting to %_arch macro (this value\n";
+        $_ .= "may be overridden with the --buildarch parameter.\n";
+        $_ .= "Please install File::Find to allow for automatic\n";
+        $_ .= "arch selection.";
+        $_ .= "\n$@" if $info->{debug};
+        print;
+        }
+    else {
+        my $xs = 0;
+        find(sub { $xs = 1 if /\.(xs|c)$/i }, $info->{evaldir});
+        $info->{buildarch} = "noarch" if $xs == 0;
         }
 
     chdir $info->{evaldir} || die "get_meta(): $!";
@@ -398,7 +428,7 @@ sub get_meta {
     eval qq/*${PLFN}_orig = \\&$PLFN/;
     eval qq/*$PLFN = sub {
         die "SAFETY ABORT!" if \$ENV{_DEEP_RECURSION}++ > 10;
-        %meta = \@_;
+        %meta = \@_ unless %meta;
         *$PLFN = \\&${PLFN}_orig;
         goto &$PLFN;
         };/;
@@ -492,8 +522,10 @@ sub get_meta {
     if (!$meta{DESCRIPTION} && $from) {
         local $_ = $from;
         ($meta{DESCRIPTION}) = /=head\d\s+DESCRIPTION\s+(.*?)=(head|cut)/ism;
+            ;
         ($meta{DESCRIPTION}) = /=head\d\s+SYNOPSIS\s+(.*?)=(head|cut)/ism
             unless $meta{DESCRIPTION};
+        $meta{DESCRIPTION} ||= "";
         $meta{DESCRIPTION} =~ s/E<lt>/</ig;
         $meta{DESCRIPTION} =~ s/E<gt>/>/ig;
         }
@@ -575,14 +607,15 @@ sub get_meta {
     $info->{doc} ||= "";
     $info->{doc} = join " ", $info->{doc}, keys %doc
         unless $info->{doc} =~ /^=/;
-    if ($info->{doc}) {
-        $info->{fixin} = <<EOF;
-            grep -rsl '^#!.*perl' . |
-            grep -v '\.bak\$' |xargs --no-run-if-empty \\
-            %__perl -MExtUtils::MakeMaker -e 'MY->fixin(\@ARGV)'
-EOF
-        }
     $info->{doc} &&= "%doc $info->{doc}";
+
+    #   fixes the #! so perl can be found (and deps get made ok)
+
+    $info->{fixin} = <<EOF;
+        grep -rsl '^#!.*perl' . |
+        grep -v '\.bak\$' |xargs --no-run-if-empty \\
+        %__perl -MExtUtils::MakeMaker -e 'MY->fixin(\@ARGV)'
+EOF
 
     #    assemble other info
 
@@ -998,7 +1031,7 @@ sub mk_rpm {
             push @cmd, "--clean" unless $info->{"no-clean"};
             push @cmd, $info->{sign} if $info->{sign};
             push @cmd, $info->{spec};
-            print join " ", ">>", @cmd, "\n" if defined $info->{debug};
+            debug(join " ", @cmd);
             print "Signing package (pass phrase required)\n"
                 if $info->{sign};
             system(@cmd);
@@ -1028,55 +1061,45 @@ sub inst_rpm {
 
 # --- module retrieval functions ----------------------------------------------
 
-#
-#   - Walks search.cpan.org for the latest uploaded distribution
-#   - Uses LWP instead of CPAN to determine the tarball
-#   - on failure, returns url passed in
-#
+sub get_cpan_plus {
+    my $info = shift;
+    my $cp = CPANPLUS::Backend->new();
 
-sub searchcpan {
-    my $dist = shift || $_;
+    print "Retrieving remote information\n- module\n";
+    my $m = $cp->search(
+        type => 'module', list => ["^$info->{dist}\$"]
+        );
+    $m = $m->{$info->{dist}}; # finds multiple packages
+    $info->{tarball} = $m->{package};
+    $info->{version} = $m->{version};
 
-    # don't process tarballs
-    return $dist if $dist =~ $tarRE;
-    # or directories
-    return $dist if -d $dist;
-    # abort unless it smells like a CPAN module
-    return $dist unless $dist =~ /^[\w:\-.]+$/;
+    print "- author\n";
+    my $a = $cp->search(
+        type => 'author', list => ["^$m->{author}\$"], authors_only => 1
+        );
+    $a = $a->{$m->{author}}; # finds multiple authors
+    $info->{author} ||= "$a->{name} <$a->{email}>";
 
-    my $cache = "$RPMDIR{SOURCES}/$dist";
-    if (!$info{force} and my $url = readlink($cache)) {
-        print "Using cached URL: $url\n";
-        return $url;
+    my $f = $m->{path} . "/" . $m->{package};
+    push @{$info->{source}}, $f;
+    debug("CPAN meta: author=$info->{author}, f=$f");
+
+    # bail if tarball already there (unless we're being --force'd)
+    if (-s "$RPMDIR{SOURCES}/$info->{tarball}"
+        && -r _
+        && ! defined $info->{force}) {
+        print "Tarball found - not fetching\n";
+        return $info->{tarball};
         }
 
-    print "Searching CPAN website\n";
-
-    my $base = "http://search.cpan.org";
-    my $url = "$base/dist/$dist"; $url =~ s/::/-/g;
-
-    # XXX - this algorithm may change as the
-    # search.cpan.org web site output changes.
-
-    local $_ = http_get($url) || return;
-    m% \<a[^<>]*         # Begin Anchor tag
-        href\s*=\s*       # href parameter
-        (['"]?)           # Maybe quote
-        ([^<>\s"']*)      # Extract link as $2
-        \1                # Maybe quote
-        [^<>]*\>          # End Anchor tag
-        \s*Download       # of the "Download" link
-        %ix;              # case insensitive HTML
-
-    print("- $dist not found!\n"), return $dist
-        unless $2;
-
-    $url = "$base/$2";
-    my ($loc, $fn) = $url =~ m|(.*)/(.*)|;
-    print "Found: $fn\nAt: $loc\n";
-    unlink($cache) if -l $cache;
-    symlink($url, $cache);
-    return $url;
+    print "Fetching module\n";
+    my $rc = $cp->fetch(
+        modules => [$info->{dist}], fetchdir => $RPMDIR{SOURCES}
+        );
+    die "Failed fetching tarball.  Stopped"
+        unless $rc->{ok};
+    
+    $info->{tarball};
     }
 
 #
@@ -1086,54 +1109,102 @@ sub searchcpan {
 #    tarball manually.
 #
 
-sub get_cpan {
+sub get_cpan_old {
     my $info = shift;
-    my $module = $info->{dist};
 
-    print "Retrieving module from CPAN\n";
-    require  CPAN;
-    import   CPAN 0.59;
-
-    my $m = CPAN::Shell->expand("Module", $module)
+    my $m = CPAN::Shell->expand("Module", $info->{dist})
         || die "Module not found on CPAN!";
 
     # somewhere between CPAN version 1.52 and 1.65 the interface
     # changed, moving all relevant data to the RO key
 
     $m = $m->{RO} if $m->{RO};
+    $info->{version} ||= $m->{CPAN_VERSION};
 
     my $a = CPAN::Shell->expand("Author", $m->{CPAN_USERID});
     $a = $a->{RO} if $a->{RO};
+
     $info->{author} ||= "$a->{FULLNAME} <$a->{EMAIL}>";
-    debug("cpan(): $info->{author}");
-    debug("cpan(): $m->{CPAN_FILE}");
+    $info->{f} = $m->{CPAN_FILE};
 
-    my $f = $m->{CPAN_FILE};
-    push @{$info->{source}}, sprintf("%s/authors/id/%s"
-        , "http://www.cpan.org"
-        , $f
-        );
+    push @{$info->{source}}, "http://search.cpan.org/dist/" .  $info->{f};
 
-    my $tarball = $f; $tarball =~ s|.*/||;
+    debug("CPAN meta: author=$info->{author}, f=$info->{f}");
 
     # bail if tarball already there (unless we're being --force'd)
-    return $tarball if -s "$RPMDIR{SOURCES}/$tarball"
-        && -r _
-        && ! defined $info->{force}
-        ;
+    my $tarball = $info->{f}; $tarball =~ s|.*/||;
+    if (-s "$RPMDIR{SOURCES}/$tarball" && -r _ && ! defined $info->{force}) {
+        print "Tarball found - not fetching\n";
+        return $tarball;
+        }
 
-    get($f);
+    get($info->{f});
 
     $CPAN::Config->{'keep_source_where'} ||= "UNKNOWN";
     my $ff = sprintf("%s/authors/id/%s"
         , $CPAN::Config->{'keep_source_where'}
-        , $f
+        , $info->{f}
         );
 
-    debug("cpan(): $ff");
+    debug("ff=$ff");
     system("cp", $ff, $RPMDIR{SOURCES}) if -r $ff;
     $ff =~ s|.*/||;
-    $ff;
+    $info->{tarball} = $ff;
+    }
+
+#
+#   - Walks search.cpan.org for the latest uploaded distribution
+#   - Uses LWP instead of CPAN to determine the tarball
+#   - on failure, returns url passed in
+#
+
+sub get_cpan_web {
+    my $info = shift;
+    my $url;
+
+    my $cache = "$RPMDIR{SOURCES}/$info->{dist}";
+    if (!$info{force} && ($url = readlink($cache))) {
+        print "Using cached URL: $url\n";
+        }
+    else {
+        my $base = "http://search.cpan.org";
+        $url = "$base/dist/$info->{dist}"; $url =~ s/::/-/g;
+
+        # XXX - this algorithm may change as the
+        # search.cpan.org web site output changes.
+
+        local $_ = http_get($url) || return;
+        m% \<a[^<>]*         # Begin Anchor tag
+            href\s*=\s*       # href parameter
+            (['"]?)           # Maybe quote
+            ([^<>\s"']*)      # Extract link as $2
+            \1                # Maybe quote
+            [^<>]*\>          # End Anchor tag
+            \s*Download       # of the "Download" link
+            %ix;              # case insensitive HTML
+
+        die "Module not found on CPAN web site!"
+            unless $2;
+
+        $url = "$base/$2";
+        my ($loc, $fn) = $url =~ m|(.*)/(.*)|;
+        print "Found: $fn\nAt: $loc\n";
+        unlink($cache) if -l $cache;
+        symlink($url, $cache);
+        }
+
+    $info->{f} = $url;
+
+    # bail if tarball already there (unless we're being --force'd)
+    my $tarball = $info->{f}; $tarball =~ s|.*/||;
+    if (-s "$RPMDIR{SOURCES}/$tarball" && -r _ && ! defined $info->{force}) {
+        print "Tarball found - not fetching\n";
+        return $tarball;
+        }
+
+    push @{$info->{source}}, $info->{f};
+    $info->{tarball} = write_url($RPMDIR{SOURCES}, $info->{f})
+            || die "Unable to retrieve tarball";
     }
 
 # --- tar handling functions --------------------------------------------------
@@ -1174,7 +1245,7 @@ sub untar($) {
 
     my $d = qx/tar -t${z}f $_ |head -1/;
     chomp($d);
-    $dst .= "/$d" if $d =~ s|/$||;
+    $dst .= "/$d" if $d =~ s|/.*$||;
     return $dst;
     }
 
@@ -1581,7 +1652,8 @@ sub untaint {
 sub debug {
     my $msg = shift;
     my $level = shift || 1;
-    print "> $msg" if $level <= $info{debug};
+    $info{debug} ||= 0;
+    print "> $msg\n" if $level <= $info{debug};
     }
 
 sub syntax {
@@ -1896,6 +1968,10 @@ The options below perform functions not closely related to the quotidien process
 
 =over
 
+=item B<--fetch=C<string-value>>
+
+One of B<plus>, B<old>, B<web>, this parameter specifies which method to use when retrieving a module from CPAN.  If left unspecified this value is calculated by probing for the existence of the required modules in the given order i.e. if CPAN+ is installed, it is used, otherwise, if CPAN is installed that is used.  If all else fails the web page is scraped for the module.
+
 =item B<--modules, -f =C<string-value>>
 
 Lists of modules to be processed can be stored in a file.  Pass this parameter the name of your file.  The file should contain the name of each module in a single line and the modules can be specified in any of their many forms (e.g. url, path to tarball, CPAN module name, etc.).  Comments (begining with #) will be ignore and so will empty lines.
@@ -2034,6 +2110,7 @@ Some things we're working on/thinking about:
 4. Provides: requirements are generated in the form "perl(POE::Filter) = 1.12" but not "perl-POE-Filter = 1.12" which is for SuSE.
 5. PREREQ_PM should be added to the unique list of requirements for the RPM
 6. look into --make-test-continue to move past failed testing
+7. rethink --force
 
 =head1 AVAILABILITY
 
@@ -2049,12 +2126,19 @@ and the project is also hosted on SourceForge at:
 
 F<http://sourceforge.net/projects/cpan2rpm/>
 
+=head1 CHANGES
+
+The distribution includes a F<Changes> file which details the evolution of
+this utility.  For your convenience, this file may also be found online at:
+
+F<http://perl.arix.com/cpan2rpm/Changes>
+
 =head1 LICENCE AND COPYRIGHT
 
 Copyright (c) 2002-2003 Erick Calder <ecalder@cpan.org>
 
 This product is free and distributed under the Gnu Public License (GPL).  A copy of this license was included in this distribution in a file called LICENSE.  If for some reason, this file was not included, please see F<http://www.gnu.org/licenses/> to obtain a copy of this license.
 
-$Id: cpan2rpm,v 2.273 2004/02/26 04:07:44 ekkis Exp $
+$Id: cpan2rpm,v 2.279 2004/03/13 22:11:59 ekkis Exp $
 
 =cut

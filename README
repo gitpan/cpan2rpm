@@ -76,11 +76,24 @@ Note that whilst cpan2rpm will firts try other means of retrieval, if
 these fail (and they will when beind firewalls) wget will eventually
 get run, assuming it is installed on your system.
 
+6) If you are building on Redhat 9.0 and are experiencing weird
+problems with corrupt makefiles, please be aware there is a bug
+with the perl package shipped with that distribution.  The short
+answer is: do not set your LANG environment variable to UTF, the
+problem has something to do with UTF translations.  Do something
+like this:
+
+    # export LANG=en_US
+
+For more information see:
+
+    http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=87682
+
 - DOCUMENTATION -
 
 For full documentation see the accompanying man page or refer to
 
-	http://perl.arix.com
+	http://perl.arix.com/cpan2rpm/
 
 - SUPPORT -
 
@@ -88,6 +101,6 @@ For help and thank you notes, e-mail ecalder@cpan.org.  To review
 known issues, report a new bug, submit a patch, or add to the
 wishlist, please visit:
 
-http://rt.cpan.org/NoAuth/Bugs.html?Dist=cpan2rpm
+    http://rt.cpan.org/NoAuth/Bugs.html?Dist=cpan2rpm
 
-$Id: README,v 2.10 2003/07/14 18:38:26 ekkis Exp $
+$Id: README,v 2.11 2004/03/12 22:21:31 ekkis Exp $

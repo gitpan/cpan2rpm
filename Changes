@@ -1,5 +1,29 @@
 Revision history for cpan2rpm
 
+2.025 03/13/04 14:14:37
+
+- implemented CPAN+ support
+- renamed --cpan to --fetch to specify fetch methods
+- now supports building directories other than the current
+- tarballs created with older versions of tar do not include the embedded
+  subdirectory as a single line.  applied patch to fix this problem.
+  Thanks to Nigel Metheringham <Nigel.Metheringham@dev.InTechnology.co.uk>
+  for pointing this out
+- packages that include perl scripts may contain any number of paths
+  for the perl executable in the first line (#!).  This causes the
+  requirements generator to product reqs for the various paths of
+  perl, which is a problem.  this fix patches all perl scripts
+  so they generate a single req for the correct perl path.  for
+  an example see the Tk package which lists both /usr/bin/perl and
+  /usr/local/bin/perl - thanks to Adam Shand [ashand@wetafx.co.nz]
+  for pointing this out.
+- distributions containing multiple modules each of which has a makefile
+  generated leave the metadata hash populated with the last module
+  processed instead of the first (which is usually the parent package).
+  This behaviour causes a problem whereby a module like Tk ends up
+  renamed as Tk::Text - thanks to Adam Shand [ashand@wetafx.co.nz] for
+  pointing this out
+
 2.024 02/25/04 20:08:34
 - added support for processing multiple modules at the command line
 - now can use a file to store a list of modules to process (see --modules)

@@ -20,7 +20,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.023";
+$VERSION = "2.024";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -40,12 +40,15 @@ my $SPECCOL = 10;   # col width for generated spec files
 
 # --- main() ------------------------------------------------------------------
 
-init();            # initialise stuff
-get_mod();         # retrieve a module to work with
-get_meta();        # get metadata from tarball
-mk_spec();         # create a custom spec file
-mk_rpm();          # build the RPM
-inst_rpm();        # install it if requested
+init();             # initialise stuff
+
+for (@ARGV) {
+    $_ = get_mod(); # retrieve a module to work with
+    get_meta();     # get metadata from tarball
+    mk_spec();      # create a custom spec file
+    mk_rpm();       # build the RPM
+    inst_rpm();     # install it if requested
+    }
 
 # --- support functionality ---------------------------------------------------
 
@@ -62,8 +65,8 @@ sub init {
     $|++;    # good for system()
     ($ME = $0) =~ s|.*/||;
 
-    $ENV{PATH} = "/bin:/usr/bin"; ### fucking suexec
-    chomp($CWD = untaint(qx/pwd/));
+    $ENV{PATH} = "/bin:/usr/bin";       # makes suexec happy
+    chomp($CWD = untaint(qx/pwd/));     # remember where we start
 
     $RPM = inpath("rpmbuild");
     $RPM = inpath("rpm") unless $RPM;
@@ -130,6 +133,7 @@ sub init {
         "install|i"       => "install package when done",
         "force"           => "forces all operations",
         # -- miscellaneous options
+        "modules|f=s"     => "file containing module list",
         "mk-rpm-dirs=s"   => "creates RPM dirs for non-root users",
         "sign-setup:s"    => "sets up RPM to support signatures",
         "upgrade"         => "upgrades cpan2rpm",
@@ -150,7 +154,7 @@ sub init {
             print "\n-- cpan2rpm - Ver: $VERSION --\n";
             my $msg = "A configuration file [$cfg] is present\n";
             $msg .= "but the module [Getopt::ArgvFile] is not available.\n";
-            $msg .= "Either install the module or remove the file.\n";
+            $msg .= "Either install the module or remove the config file.\n";
             die $msg;
             }
         argvFile(home=> 1);
@@ -187,74 +191,12 @@ sub init {
     #   set up local account to build packages
 
     if ($info{"mk-rpm-dirs"}) {
-        local $_ = "$ENV{HOME}/.rpmmacros";
-        my $topdir = `echo -n $info{"mk-rpm-dirs"}`;
-        if (!-e) {
-            writefile($_, qq/%_topdir $topdir\n/);
-            }
-        elsif (-r) {
-            my $s = readfile();
-            writefile($_, qq/\n%_topdir $topdir\n/, ">>")
-                unless $s =~ /topdir/is;
-            }
-
-        my @subdirs = qw|
-            BUILD SOURCES SPECS SRPMS
-            RPMS RPMS/i386 RPMS/i686 RPMS/noarch
-            |;
-        push @subdirs, "RPMS/$info{buildarch}" if $info{buildarch};
-        for (map "$topdir/$_", "", @subdirs) {
-            next if -e;
-            mkdir($_, 0755) || die "Cannot make $_: $!";
-            }
-
-        print "RPM user environment set up.  Your system should be ";
-        print "ready for packaging!\n";
+        mk_rpm_dirs();
         exit;
         }
 
     if (defined $info{"sign-setup"}) {
-        my $msg = "Incorrectly formatted argument.  ";
-        $msg .=  "Do not pass a module name with this option!\nStopped";
-        die $msg unless $info{"sign-setup"} =~ /(^(gpg|pgp):)|^\s*$/i;
-
-        my $mac = "$ENV{HOME}/.rpmmacros"; local $_ = $mac;
-        die "Cannot read use macros file" unless -r;
-
-        readfile();
-        die "Package signing already set up.\n"
-            . "Please edit macros file manually at $mac\n"
-            . "Stopped"
-            if /%_signature/i;
-
-        # make sure gpg's there
-        my $gpg = getrpm_macdef("_gpg");
-        $gpg = inpath("gpg") unless -e $gpg;
-        $gpg = inpath("pgp") unless -e $gpg;
-        die "Neither GPG nor PGP found in PATH.  Stopped"
-            unless -e $gpg;
-        die "$gpg is not executable!  Stopped" unless -x $gpg;
-
-        my $gpg_path = getrpm_macdef("_gpg_path");
-        $gpg_path = "$ENV{HOME}/.gnupg" if $gpg_path eq '%{_gpg_path}';
-        my ($type, $usr) = split ":", $info{"sign-setup"};
-        $type ||= "gpg";
-
-        my $key = gpgkey();
-        $msg = "No keypairs available on your keyring!  Run:\n";
-        $msg .= "\n\t# gpg --gen-key\n";
-        $msg .= "\nStopped";
-        die $msg unless $key;
-
-        $usr ||= $key;
-
-        my @gpg = ("%_signature $type");
-        push @gpg, "%_gpgbin $gpg";
-        push @gpg, "%_gpg_path $gpg_path";
-        push @gpg, "%_gpg_name $usr";
-
-        writefile($mac, join($/, "", @gpg, ""), ">>");
-        print "Package signing macros set up.\nPlease review $mac\n";
+        sign_setup();
         exit;
         }
 
@@ -283,9 +225,6 @@ sub init {
         $sig =~ s/none//i;
         $sig && ($info{sign} = "--sign") || print "Signatures not set up\n";
         }
-
-    $info{dist} = shift @ARGV
-        || syntax(\%desc, "No distribution specified!");
 
     #   deal with newer versions
     chkupgrade();
@@ -320,38 +259,60 @@ sub init {
         }
 
     $info{"make-no-test"} = 1 if $info{"no-depchk"};
+
+    if ($info{modules}) {
+        local $_ = $info{modules};
+        die "Module list file does not exist!" unless -e;
+        die "Cannot read module list file!" unless -r;
+        for (split $/, readfile()) {
+            s/#.*//;
+            push @ARGV, $_ unless /^\s*$/;
+            }
+        }
+
+    syntax(\%desc, "No distribution specified!")
+        unless @ARGV;
     }
 
+#
+#   returns hash of info or ref to it in scalar mode
+#
+
 sub get_mod {
-    my $dist; $info{dist} = $dist if $dist = searchcpan();
+    my $dist = shift || $_ || die "get_mod(): no args!";
+
+    print "*\n*\t$dist\n*\n";
+
+    my %ret = %info;                          # inherit user prefs
+    $dist = $ret{dist} = searchcpan($dist);   # look on the web first
 
     #
     #    a url was passed
     #
 
-    if (isurl($info{dist})) {
-        $info{tarball} = write_url($RPMDIR{SOURCES}, $info{dist})
+    if (isurl($dist)) {
+        $ret{tarball} = write_url($RPMDIR{SOURCES}, $dist)
             || die "Unable to retrieve tarball";
-        push @{$info{source}}, $info{dist};
+        push @{$ret{source}}, $dist;
         }
 
     #
     #    argument passed is a local file name
     #
 
-    elsif (istarball($info{dist}, 1)) {
-        cp($info{dist}, $RPMDIR{SOURCES})
-            || die "get_mod(): cp [$info{dist}] - $!"
+    elsif (istarball($dist, 1)) {
+        cp($dist, $RPMDIR{SOURCES})
+            || die "get_mod(): cp [$dist] - $!"
             ;
-        ($info{tarball} = $info{dist}) =~ s|.*/||;
+        ($ret{tarball} = $dist) =~ s|.*/||;
         }
 
     #
     #   argument passed is a directory
     #
 
-    elsif (-d $info{dist}) {
-        $info{dist} = $CWD if $info{dist} eq ".";
+    elsif (-d $dist) {
+        $dist = $CWD if $dist eq ".";
         }
 
     #
@@ -359,15 +320,23 @@ sub get_mod {
     #
 
     else {
-        $info{tarball} = get_cpan();
+        $ret{tarball} = get_cpan(\%ret);
         }
+
+    wantarray() ? %ret : \%ret;
+    }
+
+sub get_meta {
+    my $info = shift || $_; local $_;
+
+    print "Metadata retrieval\n";
 
     #    extract tarball
 
-    unless (-d ($info{evaldir} = $info{dist})) {
-        my $f = "$RPMDIR{SOURCES}/$info{tarball}";
+    unless (-d ($info->{evaldir} = $info->{dist})) {
+        my $f = "$RPMDIR{SOURCES}/$info->{tarball}";
         print "Tarball extraction: [$f]\n";
-        $info{evaldir} = untar($f);
+        $info->{evaldir} = untar($f);
 
         eval "use File::Find";
         if ($@) {
@@ -376,35 +345,31 @@ sub get_mod {
             $_ .= "may be overridden with the --buildarch parameter.\n";
             $_ .= "Please install File::Find to allow for automatic\n";
             $_ .= "arch selection.";
-            $_ .= "\n$@" if $info{debug};
+            $_ .= "\n$@" if $info->{debug};
             print;
             }
         else {
             my $xs = 0;
-            find(sub { $xs = 1 if /\.(xs|c)$/ }, $info{evaldir});
-            $info{buildarch} = "noarch" if $xs == 0;
+            find(sub { $xs = 1 if /\.(xs|c)$/i }, $info->{evaldir});
+            $info->{buildarch} = "noarch" if $xs == 0;
             }
         }
-    }
 
-sub get_meta {
-    print "Metadata retrieval\n";
+    chdir $info->{evaldir} || die "get_meta(): $!";
 
-    chdir $info{evaldir} || die "get_meta(): $!";
-
-    local $_ = "$info{evaldir}/Build.PL";
-    $_ = "$info{evaldir}/Makefile.PL" unless -e;
+    $_ = "$info->{evaldir}/Build.PL";
+    $_ = "$info->{evaldir}/Makefile.PL" unless -e;
     die qq/No PL file in tarball/ unless -e;
     die qq/Cannot read PL file/ unless -r;
 
-    ($info{PL} = $_) =~ s|.*/||;
+    ($info->{PL} = $_) =~ s|.*/||;
 
     #   we want to protect us from exit()ing but without modifying the
     #   actual Makefile.PL since we may be operating in a source directory
 
     my $PL = readfile();
     $PL =~ s/\bexit\b/return/gs;
-    my $t = "$info{evaldir}/PL.$$";
+    my $t = "$info->{evaldir}/PL.$$";
     writefile($t, $PL);
 
     #   now we get the arguments passed to the method that creates
@@ -417,18 +382,18 @@ sub get_meta {
     #   we already own it and have hijacked the appropriate method
 
     my $PLMOD = "ExtUtils::MakeMaker";
-    if ($info{PL} =~ /^Build/) {
+    if ($info->{PL} =~ /^Build/) {
         $PLMOD = "Module::Build"; 
         # Module::Build builds itself using itself
-        # but we don't have $info{name} yet, so we use the tarball name
-        unshift @INC, 'lib' if $info{tarball} =~ /^Module-Build/;
+        # but we don't have $info->{name} yet, so we use the tarball name
+        unshift @INC, 'lib' if $info->{tarball} =~ /^Module-Build/;
         }
     $@ = ""; eval "use $PLMOD"; die "$PLMOD unloadable\n $@" if $@;
 
     # grab parameters to function e.g. WriteMakefile()
 
     my $PLFN = "ExtUtils::MakeMaker::WriteMakefile";
-    $PLFN = "Module::Build::new" if $info{PL} =~ /^Build/;
+    $PLFN = "Module::Build::new" if $info->{PL} =~ /^Build/;
 
     eval qq/*${PLFN}_orig = \\&$PLFN/;
     eval qq/*$PLFN = sub {
@@ -440,7 +405,7 @@ sub get_meta {
 
     local @ARGV = ();
     local $0 = $t;
-    push @ARGV, $info{"make-maker"} if $info{"make-maker"};
+    push @ARGV, $info->{"make-maker"} if $info->{"make-maker"};
     # no input or output
     std_close();
     # execute the makefile
@@ -453,13 +418,13 @@ sub get_meta {
     std_restore();
     unlink $t || die "get_meta(): rm[$t] - $!";
     if (!$ok) {
-        $err =~ s/$t/$info{PL}/g;
-        die "FATAL CRASH! Could not load $info{PL}:\n$err";
+        $err =~ s/$t/$info->{PL}/g;
+        die "FATAL CRASH! Could not load $info->{PL}:\n$err";
         }
 
     #   map Build.PL hash keys to MakeMaker's
 
-    if ($info{PL} =~ /^Build/) {
+    if ($info->{PL} =~ /^Build/) {
         my %b2m = qw/
             requires PREREQ_PM
             module_name NAME
@@ -486,35 +451,35 @@ sub get_meta {
         }
     my $msg = "Unable to build module, the following dependencies have failed:";
     die "$msg\n  " . join("\n  ", @deps) . "\nStopped"
-        if @deps && !$info{"no-depchk"};
+        if @deps && !$info->{"no-depchk"};
     print "Dependency check skipped (--make-no-test implied)\n"
-        if $info{"no-depchk"};
+        if $info->{"no-depchk"};
 
     #   figure out package name
 
-    $info{module} ||= $meta{DISTNAME} || $meta{NAME};
-    if (!$info{module}) {
+    $info->{module} ||= $meta{DISTNAME} || $meta{NAME};
+    if (!$info->{module}) {
         #   for directories, guess at the tarball name
-        if (-d $info{dist}) {
-            ($info{tarball} = $info{dist}) =~ s|.*/||;
+        if (-d $info->{dist}) {
+            ($info->{tarball} = $info->{dist}) =~ s|.*/||;
             # a source directory may include a version #
-            $info{tarver} = $info{tarball} =~ s/-(\d+\.?\d*)$// ? $1 : "";
+            $info->{tarver} = $info->{tarball} =~ s/-(\d+\.?\d*)$// ? $1 : "";
             }
-        $info{module} = $info{tarball};
-        $info{module} =~ s/-(\d+\.?\d*)$tarRE$//i;
-        $info{module} =~ s/-/::/g;
+        $info->{module} = $info->{tarball};
+        $info->{module} =~ s/-(\d+\.?\d*)$tarRE$//i;
+        $info->{module} =~ s/-/::/g;
         }
 
-    ($info{name} = $info{module}) =~ s/::/-/g unless $info{name};
-    $info{tarball} = $info{name} if -d $info{dist};
+    ($info->{name} = $info->{module}) =~ s/::/-/g unless $info->{name};
+    $info->{tarball} = $info->{name} if -d $info->{dist};
 
     die "No package name available.  Stopped"
-        unless $info{name};
+        unless $info->{name};
 
     #   get module description info
 
     my $from = $meta{ABSTRACT_FROM} || $meta{VERSION_FROM};
-    ($from = "$info{module}.pm") =~ s/.*:// unless $from;
+    ($from = "$info->{module}.pm") =~ s/.*:// unless $from;
     $from = readfile($from);
 
     $meta{ABSTRACT} ||= "";
@@ -533,9 +498,9 @@ sub get_meta {
         $meta{DESCRIPTION} =~ s/E<gt>/>/ig;
         }
 
-    $info{author} ||= $meta{AUTHOR} || "";
+    $info->{author} ||= $meta{AUTHOR} || "";
 
-    if (!$info{author} && $from =~ /=head\d\s+AUTHORS?\s+(.*?)=/is) {
+    if (!$info->{author} && $from =~ /=head\d\s+AUTHORS?\s+(.*?)=/is) {
         local $_ = $1;
         my ($em) = /(\S+(@|\sat\s)\S+)/is;
         $em ||= "";
@@ -548,54 +513,54 @@ sub get_meta {
         $em =~ s/[()<>]//g;           # Eryq (eryq@zeegee.com)
         $_ .= " <$em>";
         s/E<(lt|gt)>//ig;           # Erick Calder E<lt>e@arix.comE<gt>
-        $info{author} = $_;
+        $info->{author} = $_;
         }
 
-    if (!$info{author}) {
+    if (!$info->{author}) {
         # Extract generic author from any of the urls
-        for (@{$info{source}}) {
+        for (@{$info->{source}}) {
             if (isurl() && m%author.*/([A-Z\-]+)/[^/]+$%) {
-                $info{author} = (lc $1).'@cpan.org';
+                $info->{author} = (lc $1).'@cpan.org';
                 last;
                 }
             }
         }
 
     die "No author information found, please use --author option.  Stopped"
-        unless $info{author};
+        unless $info->{author};
 
     #   extract version
 
-    $info{version} ||= $meta{VERSION};
-    unless ($info{version}) {
-        $info{version} = ExtUtils::MM_Unix->parse_version($from)
+    $info->{version} ||= $meta{VERSION};
+    unless ($info->{version}) {
+        $info->{version} = ExtUtils::MM_Unix->parse_version($from)
             if $from = $meta{VERSION_FROM};
-        trim($info{version}); # parse_version() returns spaces
+        trim($info->{version}); # parse_version() returns spaces
         }
-    $info{version} ||= $info{tarver};
+    $info->{version} ||= $info->{tarver};
 
     die "No version found, please use --version option.  Stopped"
-        unless $info{version};
+        unless $info->{version};
 
     #   refix all macro dirs for %name, %version
 
     chkdirs();
 
-    $info{spec} ||= "$RPMDIR{SPECS}/$info{name}.spec";
-    ($info{tardir} = $info{evaldir}) =~ s|.*/||;
+    $info->{spec} ||= "$RPMDIR{SPECS}/$info->{name}.spec";
+    ($info->{tardir} = $info->{evaldir}) =~ s|.*/||;
 
     #   for directories, guess some of the needed values
 
-    if (-d $info{dist}) {
-        ($info{tardir} = $info{module}) =~ s|::|-|g;
-        $info{tardir} .= "-$info{version}"
-            unless $info{tardir} =~ /-(\d+.*)$/;
-        $info{tarball} = "$info{tardir}.tar.gz";
+    if (-d $info->{dist}) {
+        ($info->{tardir} = $info->{module}) =~ s|::|-|g;
+        $info->{tardir} .= "-$info->{version}"
+            unless $info->{tardir} =~ /-(\d+.*)$/;
+        $info->{tarball} = "$info->{tardir}.tar.gz";
         }
 
     #   tarballs without a subdir need one created
 
-    $info{create} = $info{tardir} =~ s/\+$// ? "-c" : "";
+    $info->{create} = $info->{tardir} =~ s/\+$// ? "-c" : "";
 
     #    create file-list for spec's %doc section
 
@@ -607,93 +572,93 @@ sub get_meta {
         # list all files that match the regexp
         $doc{$_} = 1 if /$docRE/i;
         }
-    $info{doc} ||= "";
-    $info{doc} = join " ", $info{doc}, keys %doc
-        unless $info{doc} =~ /^=/;
-    if ($info{doc}) {
-        $info{fixin} = <<EOF;
+    $info->{doc} ||= "";
+    $info->{doc} = join " ", $info->{doc}, keys %doc
+        unless $info->{doc} =~ /^=/;
+    if ($info->{doc}) {
+        $info->{fixin} = <<EOF;
             grep -rsl '^#!.*perl' . |
             grep -v '\.bak\$' |xargs --no-run-if-empty \\
             %__perl -MExtUtils::MakeMaker -e 'MY->fixin(\@ARGV)'
 EOF
         }
-    $info{doc} &&= "%doc $info{doc}";
+    $info->{doc} &&= "%doc $info->{doc}";
 
     #    assemble other info
 
-    $info{summary} = "$info{name} - " . ($meta{ABSTRACT} || "Perl module");
-    $info{description} = $meta{DESCRIPTION} if $meta{DESCRIPTION};
-    push @{$info{source}}, $info{tarball}
-        unless $info{source};
-    $info{changelog} = changelog();
+    $info->{summary} = "$info->{name} - " . ($meta{ABSTRACT} || "Perl module");
+    $info->{description} = $meta{DESCRIPTION} if $meta{DESCRIPTION};
+    push @{$info->{source}}, $info->{tarball}
+        unless $info->{source};
+    $info->{changelog} = changelog();
 
-    $info{"find-provides"}
-        &&= qq/%define __find_provides $info{"find-provides"}/;
-    $info{"find-requires"} &&= qq/
-        %define __find_requires $info{"find-requires"}\n
-        %define __perl_requires $info{"find-requires"}
+    $info->{"find-provides"}
+        &&= qq/%define __find_provides $info->{"find-provides"}/;
+    $info->{"find-requires"} &&= qq/
+        %define __find_requires $info->{"find-requires"}\n
+        %define __perl_requires $info->{"find-requires"}
         /;
 
     #   option lists
 
-    $info{"opts-simple"} = [qw/
+    $info->{"opts-simple"} = [qw/
         name summary version release epoch
         vendor packager distribution license group url
         buildroot buildarch
         /];
 
-    $info{"opts-agg"} = [qw/
+    $info->{"opts-agg"} = [qw/
         provides requires buildrequires source patch
         /];
 
-    $info{"opts-secs"} = [qw/
+    $info->{"opts-secs"} = [qw/
         prep build install clean changelog tag files
         /];
 
     #   handle aggregate options
 
-    $info{"$_-list"} = optagg() for @{$info{"opts-agg"}};
-    $info{"define-list"} .= "";
-    foreach (@{$info{"define"}}) {
+    $info->{"$_-list"} = optagg($info) for @{$info->{"opts-agg"}};
+    $info->{"define-list"} .= "";
+    foreach (@{$info->{"define"}}) {
       if (/^(\w)=(.*)/) {
-          $info{"define-list"} .= "%define $1 $2\n";
+          $info->{"define-list"} .= "%define $1 $2\n";
           }
       else {
-          $info{"define-list"} .= "%define $_\n";
+          $info->{"define-list"} .= "%define $_\n";
           }
       }
     #   section handlers
 
-    my $prologue = $info{prologue};
+    my $prologue = $info->{prologue};
     for (@$prologue) {
         my ($sec, $v) = /^(\w+):(.*)$/ || next;
-        $info{prologue}{$sec} = $v . $/;
+        $info->{prologue}{$sec} = $v . $/;
         }
 
-    my $epilogue = $info{epilogue};
+    my $epilogue = $info->{epilogue};
     for (@$epilogue) {
         my ($sec, $v) = /^(\w+):(.*)$/ || next;
-        $info{epilogue}{$sec} = $v . $/;
+        $info->{epilogue}{$sec} = $v . $/;
         }
 
-    for (@{$info{"opts-secs"}}) {
-        $info{prologue}{$_} ||= "";
-        $info{epilogue}{$_} ||= "";
+    for (@{$info->{"opts-secs"}}) {
+        $info->{prologue}{$_} ||= "";
+        $info->{epilogue}{$_} ||= "";
         }
 
     #   special situations
 
-    if ($info{"no-requires"}) {
+    if ($info->{"no-requires"}) {
         my $noreqs = "";
-        $noreqs .= qq/-e '$_' / for split /\s*,\s*/, $info{"no-requires"};
-        delete $info{"no-requires"};
-        $info{"no-requires"}{"define"}
+        $noreqs .= qq/-e '$_' / for split /\s*,\s*/, $info->{"no-requires"};
+        delete $info->{"no-requires"};
+        $info->{"no-requires"}{"define"}
             = "%define custom_find_req %{_tmppath}/%{NVR}-find-requires";
-        $info{"find-requires"}
+        $info->{"find-requires"}
             = "%define _use_internal_dependency_generator 0";
-        $info{"find-requires"}
+        $info->{"find-requires"}
             .= "\n%define __find_requires %{custom_find_req}";
-        $info{"find-requires"}
+        $info->{"find-requires"}
             .= "\n%define __perl_requires %{custom_find_req}";
         local $_ = qq[cat <<EOF > %{custom_find_req}
             #!/bin/sh
@@ -702,24 +667,25 @@ EOF
             chmod 755 %{custom_find_req}
             ];
         s/^\s+//mg;
-        $info{"no-requires"}{"install"} = $_;
-        $info{"no-requires"}{"clean"} = "rm -f %{custom_find_req}";
+        $info->{"no-requires"}{"install"} = $_;
+        $info->{"no-requires"}{"clean"} = "rm -f %{custom_find_req}";
         }
 
-    $info{"no-requires"}{"define"} ||= "";
-    $info{"no-requires"}{"install"} ||= "";
-    $info{"no-requires"}{"clean"} ||= "";
+    $info->{"no-requires"}{"define"} ||= "";
+    $info->{"no-requires"}{"install"} ||= "";
+    $info->{"no-requires"}{"clean"} ||= "";
 
     # fix patch info
 
     my $i = 0;
-    $info{"patch-files"} = "";
-    $info{"patch-apply"} = "";
+    $info->{"patch-files"} = "";
+    $info->{"patch-apply"} = "";
 
-    for (split $/, $info{"patch-list"}) {
+    for (split $/, $info->{"patch-list"}) {
         s/.*:\s+//;
-        $info{"patch-files"} .= sprintf("%-*s %s\n", $SPECCOL, "Patch$i:", $_);
-        $info{"patch-apply"} .= "%patch$i -p1\n";
+        $info->{"patch-files"}
+            .= sprintf("%-*s %s\n", $SPECCOL, "Patch$i:", $_);
+        $info->{"patch-apply"} .= "%patch$i -p1\n";
         # put patches in RPM dir if needed
         cp($_, $RPMDIR{SOURCES})
             || die "Unable to copy patch [$_]: $!";
@@ -736,30 +702,32 @@ EOF
 #
 
 sub mk_spec {
+    my $info = shift || $_; local $_;
+
     print "Generating spec file\n";
 
     # clean warnings about missing keys
 
-    $info{$_} ||= "" for keys(%info), @{$info{"opts-simple"}};
-    $info{$_} ||= "" for qw/make fixin/;    # extra tags
-    $info{"$_-list"} ||= "" for @{$info{"opts-agg"}};
+    $info->{$_} ||= "" for keys(%info), @{$info->{"opts-simple"}};
+    $info->{$_} ||= "" for qw/make fixin/;    # extra tags
+    $info->{"$_-list"} ||= "" for @{$info->{"opts-agg"}};
 
     # strip ctrl-M's from Windoze files
 
-    $info{$_} =~ s/\r//g for keys %info;
+    $info->{$_} =~ s/\r//g for keys %info;
 
     # generalise whenever possible
 
     for (qw/tardir source/) {
-        $info{$_} =~ s/$info{name}/%{pkgname}/;
-        $info{$_} =~ s/$info{version}/%{version}/;
+        $info->{$_} =~ s/$info->{name}/%{pkgname}/;
+        $info->{$_} =~ s/$info->{version}/%{version}/;
         }
 
-    $info{description} =~ s/\s+$//;
-    $info{maketest} = $info{"make-no-test"} ? 0 : 1;
-    $info{vendor} = $info{author};
+    $info->{description} =~ s/\s+$//;
+    $info->{maketest} = $info->{"make-no-test"} ? 0 : 1;
+    $info->{vendor} = $info->{author};
 
-    if ($info{name} eq "ExtUtils-MakeMaker") {
+    if ($info->{name} eq "ExtUtils-MakeMaker") {
         # MakeMaker builds itself using itself
         $ENV{PERL5LIB} = $ENV{PERL5LIB}?"lib:$ENV{PERL5LIB}":"lib";
         }
@@ -772,7 +740,7 @@ sub mk_spec {
             if \\$ExtUtils::MakeMaker::VERSION =~ /5\.9[1-6]|6\.0[0-5]/
         #;
     $mm_maker =~ s/\s+/ /gs;
-    $info{"make-maker"} ||= sprintf($perl, $mm_maker);
+    $info->{"make-maker"} ||= sprintf($perl, $mm_maker);
 
     # Versions before 5.91 need PREFIX= on install line
     # Versions after 6.05 need DESTDIR= on install line
@@ -783,35 +751,35 @@ sub mk_spec {
             : qq|DESTDIR=%{buildroot}|
         #;
     $mm_install =~ s/\s+/ /gs;
-    $info{"make-install"} ||= sprintf($perl, $mm_install);
+    $info->{"make-install"} ||= sprintf($perl, $mm_install);
 
-    $info{"make-install"} = "destdir=%{buildroot}"
-        if $info{PL} =~ /^Build/;
+    $info->{"make-install"} = "destdir=%{buildroot}"
+        if $info->{PL} =~ /^Build/;
 
-    if ($info{"shadow-pure"}) {
+    if ($info->{"shadow-pure"}) {
         # Force pure perl installs into first @INC slot
-        $info{"make-maker"} .= sprintf("; %%{__perl} -p -i -e '%s' Makefile",
+        $info->{"make-maker"} .= sprintf("; %%{__perl} -pi -e '%s' Makefile",
             q|s/^(INSTALL[PVS]\w+LIB =).*/$1 \$(INSTALLARCHLIB)/|
             );
 
         # Avoid man page conflicts with default
-        $info{"make-maker"} .= sprintf("; %%{__perl} -p -i -e '%s' Makefile",
+        $info->{"make-maker"} .= sprintf("; %%{__perl} -pi -e '%s' Makefile",
             q|s,(INSTALLMAN3DIR =[^/]+)/.*,$1/man/man3,|
             );
         }
 
     # prepend string to separate module from usual namespace
 
-    my $pkgname = $info{name};
-    $info{name} = "perl-" . $info{name} unless $info{"no-prfx"};
+    my $pkgname = $info->{name};
+    $info->{name} = "perl-" . $info->{name} unless $info->{"no-prfx"};
 
     my $spec = <<ZZ;
         #
-        #   - $info{module} -
+        #   - $info->{module} -
         #   This spec file was automatically generated by cpan2rpm [ver: $VERSION]
 ZZ
     my $me; ($me = $0) =~ s|.*/||;
-    $spec .= <<ZZ unless $info{module} eq $me;
+    $spec .= <<ZZ unless $info->{module} eq $me;
         #   The following arguments were used:
         #       $ARGS
 ZZ
@@ -822,41 +790,41 @@ ZZ
         %define pkgname $pkgname
         %define filelist %{pkgname}-%{version}-filelist
         %define NVR %{pkgname}-%{version}-%{release}
-        %define maketest $info{maketest}
+        %define maketest $info->{maketest}
 ZZ
-    $spec .= <<ZZ if $info{"define-list"};
+    $spec .= <<ZZ if $info->{"define-list"};
         # user definitions
-        $info{"define-list"}
+        $info->{"define-list"}
 ZZ
     $spec =~ s/^[^\S\n]+//mg;
 
-    $spec .= $info{"no-requires"}{"define"} . $/
-        if $info{"no-requires"}{"define"};
-    $spec .= $info{"find-provides"} . $/
-        if $info{"find-provides"};
-    $spec .= $info{"find-requires"} . $/
-        if $info{"find-requires"};
+    $spec .= $info->{"no-requires"}{"define"} . $/
+        if $info->{"no-requires"}{"define"};
+    $spec .= $info->{"find-provides"} . $/
+        if $info->{"find-provides"};
+    $spec .= $info->{"find-requires"} . $/
+        if $info->{"find-requires"};
 
     #   add simple tags
 
     $spec .= "\n";
-    for (@{$info{"opts-simple"}}) {
-        $spec .= sprintf("%-*s %s\n", $SPECCOL, "$_:", $info{$_})
-            if $info{$_};
+    for (@{$info->{"opts-simple"}}) {
+        $spec .= sprintf("%-*s %s\n", $SPECCOL, "$_:", $info->{$_})
+            if $info->{$_};
         }
 
     $spec .= sprintf("%-*s %s\n", $SPECCOL, "prefix:", "%(echo %{_prefix})");
 
     #   add lists
 
-    $spec .= $info{"provides-list"};
-    $spec .= $info{"requires-list"};
-    $spec .= $info{"buildrequires-list"};
-    $spec .= $info{"source-list"};
-    $spec .= $info{"patch-files"};
-    $spec .= $info{epilogue}{tag};
+    $spec .= $info->{"provides-list"};
+    $spec .= $info->{"requires-list"};
+    $spec .= $info->{"buildrequires-list"};
+    $spec .= $info->{"source-list"};
+    $spec .= $info->{"patch-files"};
+    $spec .= $info->{epilogue}{tag};
 
-    $spec .= "\n" . q/%description/ . "\n$info{description}\n";
+    $spec .= "\n" . q/%description/ . "\n$info->{description}\n";
 
     $_ = <<ZZ;
 
@@ -870,23 +838,23 @@ ZZ
 
     #   handle sections
 
-    $_ = "%setup -q -n $info{tardir} $info{create}";
-    $_ .= $/ . $info{'patch-apply'}
-        if $info{"patch-apply"};
-    $_ .= $/ . "chmod -R u+w %{_builddir}/$info{tardir}" . $/;
-    $spec .= mksec("prep", $_);
+    $_ = "%setup -q -n $info->{tardir} $info->{create}";
+    $_ .= $/ . $info->{'patch-apply'}
+        if $info->{"patch-apply"};
+    $_ .= $/ . "chmod -R u+w %{_builddir}/$info->{tardir}" . $/;
+    $spec .= mksec($info, "prep" => $_);
 
-    $_ = ($info{PL} =~ /^Make/)
+    $_ = ($info->{PL} =~ /^Make/)
         ? qq/
-            $info{fixin}
+            $info->{fixin}
             CFLAGS="\$RPM_OPT_FLAGS"
-            %{__perl} Makefile.PL $info{"make-maker"}
-            %{__make} $info{"make"}
+            %{__perl} Makefile.PL $info->{"make-maker"}
+            %{__make} $info->{"make"}
             %if %maketest
                 %{__make} test
             %endif
         / : qq/
-            $info{fixin}
+            $info->{fixin}
             %{__perl} Build.PL
             %{__perl} Build
             %if %maketest
@@ -894,17 +862,17 @@ ZZ
             %endif
         /;
     s/^\s+//mg;
-    $spec .= mksec("build", $_);
+    $spec .= mksec($info, "build" => $_);
 
-    my $install = ($info{PL} =~ /^Make/)
+    my $install = ($info->{PL} =~ /^Make/)
         ? qq/%{makeinstall} /
         : qq/%{__perl} Build install /
         ;
-    $install .= $info{"make-install"};
+    $install .= $info->{"make-install"};
 
     $_ = <<ZZ;
         [ "%{buildroot}" != "/" ] && rm -rf %{buildroot}
-        $info{"no-requires"}{"install"}
+        $info->{"no-requires"}{"install"}
         $install
 
         [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
@@ -931,7 +899,7 @@ ZZ
 
         %{__perl} -MFile::Find -le '
             find({ wanted => \\&wanted, no_chdir => 1}, "%{buildroot}");
-            print "$info{doc}";
+            print "$info->{doc}";
             for my \$x (sort \@dirs, \@files) {
                 push \@ret, \$x unless indirs(\$x);
                 }
@@ -965,25 +933,25 @@ ZZ
             }
 ZZ
     s/^ {8}//mg;
-    $spec .= mksec("install", $_);
+    $spec .= mksec($info, "install" => $_);
 
     $_ = qq|[ "%{buildroot}" != "/" ] && rm -rf %{buildroot}\n|;
     # $_ .= qq|rm -rf %_builddir/%name-%version\n|;
-    $_ .= qq/$info{"no-requires"}{"clean"}\n/
-        if $info{"no-requires"}{"clean"};
-    $spec .= mksec("clean", $_);
+    $_ .= qq/$info->{"no-requires"}{"clean"}\n/
+        if $info->{"no-requires"}{"clean"};
+    $spec .= mksec($info, "clean" => $_);
 
     $spec .= qq|$/%files -f %filelist|;
-    $spec .= qq|$/%defattr($info{defattr})$/|;
-    $spec .= $info{epilogue}{files};
+    $spec .= qq|$/%defattr($info->{defattr})$/|;
+    $spec .= $info->{epilogue}{files};
 
-    $spec .= mksec("changelog",
-        "* $info{changelog}\n- Initial build."
+    $spec .= mksec($info, "changelog"
+        => "* $info->{changelog}\n- Initial build."
         );
 
-    writefile($info{spec}, $spec);
-    print("SPEC: $info{spec}\n");
-    exit if $info{"spec-only"};
+    writefile($info->{spec}, $spec);
+    print("SPEC: $info->{spec}\n");
+    exit if $info->{"spec-only"};
     }
 
 #
@@ -991,53 +959,55 @@ ZZ
 #
 
 sub mk_rpm {
-    if (-d $info{dist}) {
+    my $info = shift || $_; local $_;
+
+    if (-d $info->{dist}) {
         system("perl Makefile.PL && make") == 0 || die "mk_rpm(): $!"
-            unless ($info{name} eq "cpan2rpm");
+            unless ($info->{name} eq "cpan2rpm");
         system("make dist") == 0 || die "mk_rpm('make dist'): $!";
 
-        cp($info{tarball}, $RPMDIR{SOURCES})
-            || die "mk_rpm(): cp [$info{tarball}] - $!"
+        cp($info->{tarball}, $RPMDIR{SOURCES})
+            || die "mk_rpm(): cp [$info->{tarball}] - $!"
             ;
         }
 
-    $info{rpm} = sprintf("%s/%s-%s-%s.%s.rpm"
-        , "$RPMDIR{RPMS}/$info{buildarch}"
-        , $info{name}
-        , $info{version}
-        , $info{release}
-        , $info{buildarch}
+    $info->{rpm} = sprintf("%s/%s-%s-%s.%s.rpm"
+        , "$RPMDIR{RPMS}/$info->{buildarch}"
+        , $info->{name}
+        , $info->{version}
+        , $info->{release}
+        , $info->{buildarch}
         );
-    $info{srpm} = sprintf("%s/%s-%s-%s.src.rpm"
+    $info->{srpm} = sprintf("%s/%s-%s-%s.src.rpm"
         , $RPMDIR{SRPMS}
-        , $info{name}
-        , $info{version}
-        , $info{release}
+        , $info->{name}
+        , $info->{version}
+        , $info->{release}
         );
 
     my $ret = 0;
-    if (! -r $info{rpm} || $info{force}) {
+    if (! -r $info->{rpm} || $info->{force}) {
         print "Generating package\n";
 
-        my $bp = qx/$RPM -bp $info{spec} 2>&1/;
-        warn("RPM test unpacking failed! [$RPM -bp $info{spec}]\n$bp")
+        my $bp = qx/$RPM -bp $info->{spec} 2>&1/;
+        warn("RPM test unpacking failed! [$RPM -bp $info->{spec}]\n$bp")
             if $ret = $? >> 8;
 
         if ($ret == 0) {
             my @cmd = ($RPM, '-ba');
-            push @cmd, "--clean" unless $info{"no-clean"};
-            push @cmd, $info{sign} if $info{sign};
-            push @cmd, $info{spec};
-            print join " ", ">>", @cmd, "\n" if defined $info{debug};
+            push @cmd, "--clean" unless $info->{"no-clean"};
+            push @cmd, $info->{sign} if $info->{sign};
+            push @cmd, $info->{spec};
+            print join " ", ">>", @cmd, "\n" if defined $info->{debug};
             print "Signing package (pass phrase required)\n"
-                if $info{sign};
+                if $info->{sign};
             system(@cmd);
             die "RPM build failed [$ret]" if $ret = $? >> 8;
             }
         }
 
-    print "RPM: $info{rpm}\n" if -r $info{rpm};
-    print "SRPM: $info{srpm}\n" if -r $info{srpm};
+    print "RPM: $info->{rpm}\n" if -r $info->{rpm};
+    print "SRPM: $info->{srpm}\n" if -r $info->{srpm};
     return $ret;
     }
 
@@ -1046,11 +1016,11 @@ sub mk_rpm {
 #
 
 sub inst_rpm {
-    my $rpm = shift || $info{rpm};
-    return unless $info{install};
+    my $info = shift || $_; local $_;
+    return unless $info->{install};
 
     print "Installing package\n";
-    my @cmd = (qw/rpm -Uvh/, $rpm);
+    my @cmd = (qw/rpm -Uvh/, $info->{rpm});
     unshift @cmd, "sudo" if $<;
     system(@cmd);
     return $? >> 8;
@@ -1059,19 +1029,20 @@ sub inst_rpm {
 # --- module retrieval functions ----------------------------------------------
 
 #
-#    Walks search.cpan.org for the latest uploaded distribution.
-#    Uses LWP instead of CPAN to determine the tarball.
+#   - Walks search.cpan.org for the latest uploaded distribution
+#   - Uses LWP instead of CPAN to determine the tarball
+#   - on failure, returns url passed in
 #
 
 sub searchcpan {
-    my $dist = shift || $info{dist};
+    my $dist = shift || $_;
 
     # don't process tarballs
-    return if $dist =~ $tarRE;
+    return $dist if $dist =~ $tarRE;
     # or directories
-    return if -d $dist;
+    return $dist if -d $dist;
     # abort unless it smells like a CPAN module
-    return unless $dist =~ /^[\w:\-.]+$/;
+    return $dist unless $dist =~ /^[\w:\-.]+$/;
 
     my $cache = "$RPMDIR{SOURCES}/$dist";
     if (!$info{force} and my $url = readlink($cache)) {
@@ -1097,7 +1068,7 @@ sub searchcpan {
         \s*Download       # of the "Download" link
         %ix;              # case insensitive HTML
 
-    print("- $info{dist} not found!\n"), return
+    print("- $dist not found!\n"), return $dist
         unless $2;
 
     $url = "$base/$2";
@@ -1116,7 +1087,8 @@ sub searchcpan {
 #
 
 sub get_cpan {
-    my $module = shift || $info{dist};
+    my $info = shift;
+    my $module = $info->{dist};
 
     print "Retrieving module from CPAN\n";
     require  CPAN;
@@ -1132,12 +1104,12 @@ sub get_cpan {
 
     my $a = CPAN::Shell->expand("Author", $m->{CPAN_USERID});
     $a = $a->{RO} if $a->{RO};
-    $info{author} ||= "$a->{FULLNAME} <$a->{EMAIL}>";
-    debug("cpan(): $info{author}");
+    $info->{author} ||= "$a->{FULLNAME} <$a->{EMAIL}>";
+    debug("cpan(): $info->{author}");
     debug("cpan(): $m->{CPAN_FILE}");
 
     my $f = $m->{CPAN_FILE};
-    push @{$info{source}}, sprintf("%s/authors/id/%s"
+    push @{$info->{source}}, sprintf("%s/authors/id/%s"
         , "http://www.cpan.org"
         , $f
         );
@@ -1147,7 +1119,7 @@ sub get_cpan {
     # bail if tarball already there (unless we're being --force'd)
     return $tarball if -s "$RPMDIR{SOURCES}/$tarball"
         && -r _
-        && ! defined $info{force}
+        && ! defined $info->{force}
         ;
 
     get($f);
@@ -1186,14 +1158,6 @@ sub ls {
     ($d, @f);
     }
 
-sub lsd {
-    my $d = shift || $_;
-    opendir(DIR, $d) || die "lsd(): $!";
-    my @d = grep { !/^\.\.?$/ && -d "$d/$_" } readdir(DIR);
-    closedir(DIR);
-    "$d/$d[0]";
-    }
-
 #
 #    extracts a tarball
 #
@@ -1202,12 +1166,16 @@ sub untar($) {
     local $_ = shift;
     my $dst = shift || $TMPDIR;
 
-    my @cmd = (qw/tar -xz --directory/, $dst, "-f", $_);
-    @cmd = (qw/tar -xj --directory/, $dst, "-f", $_) if /\.tar\.bz2$/i;
+    my $z = /\.tar\.bz2$/i ? "j" : "z";
+    my @cmd = (qw/tar -x --directory/, $dst, "-$z", "-f", $_);
     @cmd = (qw/unzip -d/, $dst, $_) if /\.zip$/i;
     system @cmd;
     system("chmod", "-R", "u+w", $dst);
-    lsd($dst);
+
+    my $d = qx/tar -t${z}f $_ |head -1/;
+    chomp($d);
+    $dst .= "/$d" if $d =~ s|/$||;
+    return $dst;
     }
 
 # --- file handling functions -------------------------------------------------
@@ -1287,7 +1255,7 @@ sub http_get {
         print "of the following options may help:\n\n";
 
         local $\ = $/;
-        my $url = "http://www.rpmfind.net/linux/rpm2html/search.php";
+        $url = "http://www.rpmfind.net/linux/rpm2html/search.php";
         $url .= "?query=perl-libwww-perl";
         print "  1) Try $url";
         $url = "http://www.cpan.org/modules/by-module/LWP/";
@@ -1400,6 +1368,88 @@ sub chkdirs {
         }
     }
 
+# --- init routines -----------------------------------------------------------
+
+#
+#   creates user directories for RPM
+#
+
+sub mk_rpm_dirs {
+    local $_ = "$ENV{HOME}/.rpmmacros";
+    my $topdir = `echo -n $info{"mk-rpm-dirs"}`;
+    if (!-e) {
+        writefile($_, qq/%_topdir $topdir\n/);
+        }
+    elsif (-r) {
+        my $s = readfile();
+        writefile($_, qq/\n%_topdir $topdir\n/, ">>")
+            unless $s =~ /topdir/is;
+        }
+
+    my @subdirs = qw|
+        BUILD SOURCES SPECS SRPMS
+        RPMS RPMS/i386 RPMS/i686 RPMS/noarch
+        |;
+    push @subdirs, "RPMS/$info{buildarch}" if $info{buildarch};
+    for (map "$topdir/$_", "", @subdirs) {
+        next if -e;
+        mkdir($_, 0755) || die "Cannot make $_: $!";
+        }
+
+    print "RPM user environment set up.  Your system should be ";
+    print "ready for packaging!\n";
+    }
+
+#
+#   sets up an account for signing packages
+#
+
+sub sign_setup {
+    my $msg = "Incorrectly formatted argument.  ";
+    $msg .=  "Do not pass a module name with this option!\nStopped";
+    die $msg unless $info{"sign-setup"} =~ /(^(gpg|pgp):)|^\s*$/i;
+
+    my $mac = "$ENV{HOME}/.rpmmacros"; local $_ = $mac;
+    die "Cannot read use macros file" unless -r;
+
+    readfile();
+    die "Package signing already set up.\n"
+        . "Please edit macros file manually at $mac\n"
+        . "Stopped"
+        if /%_signature/i;
+
+    # make sure gpg's there
+    my $gpg = getrpm_macdef("_gpg");
+    $gpg = inpath("gpg") unless -e $gpg;
+    $gpg = inpath("pgp") unless -e $gpg;
+    die "Neither GPG nor PGP found in PATH.  Stopped"
+        unless -e $gpg;
+    die "$gpg is not executable!  Stopped" unless -x $gpg;
+
+    my $gpg_path = getrpm_macdef("_gpg_path");
+    $gpg_path = "$ENV{HOME}/.gnupg" if $gpg_path eq '%{_gpg_path}';
+    my ($type, $usr) = split ":", $info{"sign-setup"};
+    $type ||= "gpg";
+
+    my $key = gpgkey();
+    $msg = "No keypairs available on your keyring!  Run:\n";
+    $msg .= "\n\t# gpg --gen-key\n";
+    $msg .= "\nStopped";
+    die $msg unless $key;
+
+    $usr ||= $key;
+
+    my @gpg = (
+        "%_signature $type",
+        "%_gpgbin $gpg",
+        "%_gpg_path $gpg_path",
+        "%_gpg_name $usr",
+        );
+
+    writefile($mac, join($/, "", @gpg, ""), ">>");
+    print "Package signing macros set up.\nPlease review $mac\n";
+    }
+
 # --- miscellany --------------------------------------------------------------
 
 sub gpgkey {
@@ -1411,8 +1461,9 @@ sub gpgkey {
     }
 
 sub optagg {
+    my $info = shift || die "optagg: no info!";
     my $nm = shift || $_;
-    my @opt; push @opt, split /,/ for @{$info{$nm}};
+    my @opt; push @opt, split /,/ for @{$info->{$nm}};
     my $ret = "";
     $ret .= sprintf("%-*s %s\n", $SPECCOL, "$nm:", $_) for @opt;
     $ret;
@@ -1440,11 +1491,12 @@ sub inpath($) {
     }
 
 sub mksec {
+    my $info = shift;
     my $nm = shift;
     my $ret = qq|$/%$nm|;
-    $ret .= "$/$info{prologue}{$nm}" if $info{proglogue}{$nm};
+    $ret .= "$/$info->{prologue}{$nm}" if $info->{proglogue}{$nm};
     $ret .= "$/$_" for @_;
-    $ret .= "$/$info{epilogue}{$nm}" if $info{epilogue}{$nm};
+    $ret .= "$/$info->{epilogue}{$nm}" if $info->{epilogue}{$nm};
     $ret;
     }
 
@@ -1567,11 +1619,11 @@ cpan2rpm - A Perl module packager
 
 =head1 SYNOPSIS
 
-To download a tarball from CPAN and create an RPM package, its source package and the specfile:
+To download the tarball from CPAN and create an RPM package, its source package and the specfile:
 
-    cpan2rpm Proc::Daemon
+    cpan2rpm Proc::Daemon /tmp/String-Canonical-1.2.tar.gz
 
-To install by specifying a URL:
+To install from a URL:
 
     cpan2rpm -i http://.../Proc-Daemon-0.03.tar.gz
 
@@ -1579,13 +1631,17 @@ To make a package out of the current directory (that contains a module):
 
     cpan2rpm .
 
+To create a list of packages stored in a file:
+
+    cpan2rpm -f module-list
+
 =head1 DESCRIPTION
 
 This script generates an RPM package from a Perl module.  It uses the standard RPM file structure and creates a spec file, a source RPM, and a binary, leaving these in their respective directories.
 
 The script can operate on local files, directories, urls and CPAN module names.  Install this package if you want to create RPMs out of Perl modules.
 
-The syntax for cpan2rpm requires a single I<distribution> name, which can take one of four different forms:
+The syntax for cpan2rpm supports multiple I<distribution> names, which can take one of four different forms:
 
 =over
 
@@ -1828,7 +1884,7 @@ By default the script will do as little work as possible i.e. if it has already 
 
 Suppresses package signatures.  By default, cpan2rpm will sign the packages it generates IF the the RPM macros file has been configured to use signatures - this option prevents this behaviour.  See also the I<--sign-setup> option below.
 
-=item B<--install>
+=item B<--install | -i>
 
 Install the RPM after building it.  If non-root user, you must have "sudo rpm" privileges to use this option.
 
@@ -1839,6 +1895,10 @@ Install the RPM after building it.  If non-root user, you must have "sudo rpm" p
 The options below perform functions not closely related to the quotidien process of building a package.
 
 =over
+
+=item B<--modules, -f =C<string-value>>
+
+Lists of modules to be processed can be stored in a file.  Pass this parameter the name of your file.  The file should contain the name of each module in a single line and the modules can be specified in any of their many forms (e.g. url, path to tarball, CPAN module name, etc.).  Comments (begining with #) will be ignore and so will empty lines.
 
 =item B<--mk-rpm-dirs=C<string-value>>
 
@@ -1995,6 +2055,6 @@ Copyright (c) 2002-2003 Erick Calder <ecalder@cpan.org>
 
 This product is free and distributed under the Gnu Public License (GPL).  A copy of this license was included in this distribution in a file called LICENSE.  If for some reason, this file was not included, please see F<http://www.gnu.org/licenses/> to obtain a copy of this license.
 
-$Id: cpan2rpm,v 2.270 2004/02/25 23:20:58 ekkis Exp $
+$Id: cpan2rpm,v 2.273 2004/02/26 04:07:44 ekkis Exp $
 
 =cut

@@ -1,5 +1,9 @@
 Revision history for cpan2rpm
 
+2.024 02/25/04 20:08:34
+- added support for processing multiple modules at the command line
+- now can use a file to store a list of modules to process (see --modules)
+
 2.023 02/25/04 16:28:35
 - applied sourceforge patch #903878 which fixes --make-no-test for Module::Build
   Thanks again Stephen Clouse!

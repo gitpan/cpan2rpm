@@ -1,35 +1,43 @@
 use ExtUtils::MakeMaker;
 
+#   we need to create the .spec so MM doesn't complain it's missing
+#   from the kit, but it must have an old timestamp or else make
+#   refuses to make it
+
+system "touch -d '1/1/00' cpan2rpm.spec";
+
 WriteMakefile
-  NAME => "cpan2rpm",
-  AUTHOR => 'Erick Calder <ecalder@cpan.org>',
-  VERSION_FROM => "cpan2rpm",
-  ABSTRACT_FROM => "cpan2rpm",
-  EXE_FILES => [ "cpan2rpm" ],
-  PREREQ_PM => { # e.g., Module::Name => 1.1
-    'ExtUtils::MakeMaker' => 5.45,
-    'LWP::UserAgent' => 0,
-    'HTTP::Request' => 0,
-  },
-  dist => {
-    COMPRESS => "gzip -9 -vf",
-  },
-  ;
+    NAME => "cpan2rpm",
+    AUTHOR => 'Erick Calder <ecalder@cpan.org>',
+    VERSION_FROM => "cpan2rpm",
+    ABSTRACT_FROM => "cpan2rpm",
+    EXE_FILES => [ "cpan2rpm" ],
+    PREREQ_PM => { # e.g., Module::Name => 1.1
+        'ExtUtils::MakeMaker' => 5.4302,
+        'LWP::UserAgent' => 0,
+        'HTTP::Request' => 0,
+        },
+    dist => {
+        COMPRESS => "gzip -9 -vf",
+        },
+    ;
+
 
 package MY;
 
 sub processPL {
-  my $self = shift;
-  my $block = $self->SUPER::processPL(@_);
-  # "Version:" in spec needs to match
-  # "$VERSION" from VERSION_FROM
-  $block =~ s%(spec.PL\s*)$%$1 \$\(VERSION_FROM\)%m;
-  $block;
-}
+    my $self = shift;
+    my $block = $self->SUPER::processPL(@_);
+    # "Version:" in spec needs to match
+    # "$VERSION" from VERSION_FROM
+    $block =~ s%(spec.PL\s*)$%$1 \$\(VERSION_FROM\)%m;
+    $block;
+    }
 
 sub libscan {
-  my $self = shift;
-  my $path = shift;
-  ($path =~ / \bCVS\b | \~$ /x) ? undef : $path;
-  }
+    my $self = shift;
+    my $path = shift;
+    ($path =~ / \bCVS\b | \~$ /x) ? undef : $path;
+    }
+
 1;

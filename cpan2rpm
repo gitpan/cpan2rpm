@@ -3,20 +3,14 @@
 #
 #   CPAN module RPM maker
 #
-#	Author	: Erick Calder
-#	URL		: http://perl.arix.com/
-#	Support	: <perl@arix.com>
-#	License	: GPL
-#
 
 use vars qw($VERSION);
-$VERSION = substr q$Revision: 1.49 $, 10;
+$VERSION = substr q$Revision: 1.53 $, 10;
 
 # --- prologue ----------------------------------------------------------------
 
 use strict;
 use Getopt::Long;
-use HTTP::Lite;
 use Sys::Hostname;
 use CPAN 0.59;
 
@@ -73,10 +67,14 @@ sub init {
 		,	"find-provides=s"	=> "instructs us to use a given filter"
 		,	"find-requires=s"	=> "(see man page for further details)"
 		,	"spec-only"		=> "only displays spec file to stdout"
-		,	"make-maker=s"	=> "parameters for makefile creation"
+		,	"make-maker=s"	=> "arguments for makefile creation"
+		,	"make=s"		=> "arguments passed to make"
+		,	"make-install=s" => "arguments for make install"
+		,	"patch|p=s@"	=> "specifies (multiple) patches to apply"
 		,	"install|i"		=> "install package when done"
 		,	"description=s" => "package description"
 		,	"nopkgprfx"		=> "suppresses package name prefix"
+		,	"no-localcopy"	=> "suppress local copies made"
 		,	"force"			=> "forces all operations"
 		,	"debug:i"		=> "produce debugging output"
 		,	"help|h"		=> "this help screen"
@@ -84,8 +82,8 @@ sub init {
 
 	# get user options
 	my %opts = ();
-	GetOptions(\%opts, keys %desc) || syntax(\%desc);
-	syntax(\%desc) if defined $opts{help};
+	my $ret = GetOptions(\%opts, keys %desc);
+	syntax(\%desc) if defined $opts{help} || !$ret;
 
 	# override defauls with user options
 	%info = (%info, %opts);
@@ -96,7 +94,9 @@ sub init {
 
 	$RPMDIR{SOURCES} = getrpm_macdef("_sourcedir");
 	$RPMDIR{RPMS} = getrpm_macdef("_rpmdir");
+	$RPMDIR{SRPMS} = getrpm_macdef("_srcrpmdir");
 	$RPMDIR{SPECS} = getrpm_macdef("_specdir");
+	$RPMDIR{ARCH} = getrpm_macdef("_arch");
 
 	if (isurl($info{module})) {
 		#
@@ -136,6 +136,7 @@ sub init {
 END {
 	chdir $CWD;
 	qx/rm -rf $TMPBUILD/ if $TMPBUILD && !$info{debug};
+	print "-- Done --\n";
 	}
 
 #
@@ -147,11 +148,13 @@ sub get_meta {
 
 	my @ls;
 	($info{tardir}, @ls) = tarls($f);
+	$info{tardir} = "%{pkgname}-%{version}"
+		if $info{tardir} eq "$info{module}-$info{version}";
 	$info{create} = "-c" if $info{tardir} =~ s/\+$//;
 
 	#	create file-list for spec's %doc section
 
-	@ls = map(m|.*/(.*)|, @ls);	# strip leading dir
+	@ls = map(m|[^/]*/(.*)|, @ls);	# strip leading dir
 	my $re = "(readme|changes|todo|license|install|\.txt|\.html)";
 	$info{doc} = join(" ", grep(/$re/i, @ls));
 	$info{doc} = "%doc $info{doc}" if $info{doc};
@@ -203,7 +206,7 @@ sub get_meta {
 
 	if (!$info{author} && $from) {
 		local $_ = $from;
-		($info{author}) = /=head\d\s+AUTHOR\s+(.*?)=head/ism;
+		($info{author}) = /=head\d\s+AUTHOR\s+(.*)/i;
 		$info{author} =~ s/E<lt>/</ig;
 		$info{author} =~ s/E<gt>/>/ig;
 		}
@@ -253,6 +256,19 @@ sub get_meta {
 		$info{"no-requires"}{"install"} = $_;
 		$info{"no-requires"}{"clean"} = "rm -f %{custom_find_req}";
 		}
+
+	# generate patch info
+	for my $i (0 .. $#{$info{patch}}) {
+		$info{"patch-files"} .= "Patch$i: $info{patch}->[$i]\n";
+		$info{"patch-apply"} .= "%patch$i -p1\n";
+		# put patches in RPM dir if needed
+		system("cp -u $info{patch}->[$i] $RPMDIR{SOURCES}") == 0
+			|| die "Unable to copy patch: $!"
+		}
+
+	# return to user's directory
+
+	chdir $CWD;
 	}
 
 #
@@ -286,10 +302,12 @@ sub mk_spec {
 		Vendor:        $info{author}
 		Packager:      $info{packager}
 		License:       $info{license}
-		Source:        $info{source}
 		Url:           $info{url}
 		BuildRoot:     $info{buildroot}
 		BuildArch:     $info{buildarch}
+		Source:        $info{source}
+
+		$info{"patch-files"}
 		$info{requires}
 		$info{provides}
 
@@ -306,11 +324,12 @@ sub mk_spec {
 
 		%prep
 		%setup -q -n $info{tardir} $info{create}
+		$info{"patch-apply"}
 
 		%build
 		CFLAGS="\$RPM_OPT_FLAGS"
 		perl Makefile.PL $info{"make-maker"}
-		make
+		make $info{"make"}
 
 		%install
 		[ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
@@ -318,7 +337,7 @@ sub mk_spec {
 
 		eval `perl '-V:installarchlib'`
 		mkdir -p \$RPM_BUILD_ROOT/\$installarchlib
-		make PREFIX=\$RPM_BUILD_ROOT/usr install
+		make PREFIX=\$RPM_BUILD_ROOT/usr install $info{"make-install"}
 
 		[ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 
@@ -376,6 +395,19 @@ sub mk_rpm {
 		warn("RPM build failed!") if $ret = $? >> 8;
 		}
 
+	return $ret if $info{"no-localcopy"};
+
+	print "-- Making local copies --\n";
+	system("cp -u $info{rpm} .") == 0 || die "Unable to copy RPM: $!";
+
+	$info{srpm} = sprintf("%s/perl-%s-%s-%s.src.rpm"
+		, $RPMDIR{SRPMS}
+		, $info{pkgname}
+		, $info{version}
+		, $info{release}
+		);
+	system("cp -u $info{srpm} .") == 0 || die "Unable to copy SRPM: $!";
+	
 	return $ret;
 	}
 
@@ -518,6 +550,7 @@ sub tarls {
 		$d = "$_+";					# and indicate we made it up
 		}
 
+	$d =~ s|^\.+/||;				# root = ./MyDir/
 	$d =~ s|/.*||;					# make sure subdir found is top level
 	wantarray() ? ($d, @f) : $d;	# context aware
 	}
@@ -605,6 +638,7 @@ sub get_url($@) {
 	return if -r "$d/$info{tarball}" && !$info{force};
 
 	print "-- Retrieving URL --\n";
+	eval "use HTTP::Lite"; die $@ if $@;
 	my $http = new HTTP::Lite;
 	$http->request($info{source}) || die "get_url(): $!.  Stopped";
 	writefile("$d/$info{tarball}", $http->body());
@@ -777,9 +811,25 @@ This option instructs the script to not build the RPM package but instead to oly
 
 This option allows passing a string to the MakeMaker process (i.e. perl Makefile.PL <your-arguments-here>)
 
+=item I<--maker=C<string-value>>
+
+Arguments supplied here get passed directly to the make process.
+
+=item I<--make-install=C<string-value>>
+
+Allows user to supply arguments to the make install process.
+
+=item I<--patch=C<string-value>>
+
+This option allows specifying patch files to be inserted into the spec file and applied when building the source.  Please note the option may be used multiple time to specify multiple patches.
+
 =item I<--nopkgprfx>
 
 Suppresses prefixing the package name with the string C<perl->.
+
+=item I<--no-localcopy>
+
+By default, cpan2rpm copies the source and binary packages to the current directory.  This flag disables this behaviour.
 
 =item I<--force>
 
@@ -812,9 +862,11 @@ I'm happy to work on any feature requests you may have :)
 
 Same goes for bugs.
 
-=head1 AUTHOR & LICENSE
+=head1 AUTHOR
 
-Written by Erick Calder <perl@arix.com>.  This utility is free and distributed under GPL, the Gnu Public License.
+Erick Calder <ecalder@cpan.org>
+
+=head1 ACKNOWLEDGEMENTS
 
 The script was inspired by B<cpanflute> which is distributed with the rpm-build package from RedHat.  Many thanks to Robert Brown <bbb@cpan.org> for all his cool tricks, advice and patient support.
 
@@ -824,9 +876,32 @@ The latest version may always be found at:
 
 F<http://perl.arix.com/>
 
+=head1 LICENCE AND COPYRIGHT
+
+This utility is free and distributed under GPL, the Gnu Public License.
+
 =head1 CHANGES
 
 $Log: cpan2rpm,v $
+Revision 1.53  2002/09/19 03:53:05  ekkis
+patched to fix problem with tarballs that contain a leading ./ instead of just a directory name.  thx to Jim Radford <radford@robotics.caltech.edu> for pointing this out.
+
+Revision 1.52  2002/09/19 03:37:21  ekkis
+- added no-localcopy functionality to make local copies of output files
+- made %setup section more generic
+- patched use of HTTP::Lite
+- rearranged POD to have Author on a single line and added acknowledgements and license info
+
+Revision 1.51  2002/09/13 21:48:34  bbb
+Only use one line of the AUTHOR perldoc section to avoid breaking rpm spec syntax.
+
+Revision 1.50  2002/06/28 01:22:41  ekkis
+- our thanks to Jim Radford <radford@robotics.caltech.edu> for all the suggestions and patches resulting in this batch of changes
+- added --patch, --make and --make-install for greater flexibility
+- fixed regexp generating %doc list.  code now picks up documentation in subdirectories
+- modified use of HTTP::Lite to make optional.  cpan2rpm now works without it (minus capability to fetch urls)
+- README file now shows how to boot-strap HTTP::Lite
+
 Revision 1.49  2002/06/03 14:17:11  bbb
 Add username to buildroot to avoid multi-user machine conflicts.
 

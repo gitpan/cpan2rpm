@@ -7,7 +7,7 @@
 %define NVR %{pkgname}-%{version}-%{release}
 Summary:       cpan2rpm - A Perl module packager
 Name:          cpan2rpm
-Version:       2.004
+Version:       2.005
 Release:       1
 Group:         Applications/CPAN
 Distribution:  Red Hat Linux release 7.0 (Guinness)
@@ -29,7 +29,7 @@ The script can operate on local files, urls and CPAN module names.  Install this
 # please visit: http://perl.arix.com/
 #
 %prep
-%setup -q -n cpan2rpm-2.004 
+%setup -q -n cpan2rpm-2.005 
 %build
 CFLAGS="$RPM_OPT_FLAGS"
 %{__perl} Makefile.PL 
@@ -37,8 +37,6 @@ CFLAGS="$RPM_OPT_FLAGS"
 %{__make} test
 %install
 [ "$RPM_BUILD_ROOT" != "/" ] && rm -rf $RPM_BUILD_ROOT
-eval `perl '-V:installarchlib'`
-mkdir -p $RPM_BUILD_ROOT/$installarchlib
 %{makeinstall}  PREFIX=$RPM_BUILD_ROOT%{_prefix}
 [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 find $RPM_BUILD_ROOT -name "perllocal.pod" \
@@ -53,5 +51,5 @@ find $RPM_BUILD_ROOT%{_prefix} -type d -depth -exec rmdir {} \; 2>/dev/null
 %doc README Changes
 %{_prefix}
 %changelog
-* Tue Dec 10 2002 ekkis@beowulf
+* Thu Dec 12 2002 ekkis@beowulf
 - Initial build.

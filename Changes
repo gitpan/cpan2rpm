@@ -1,6 +1,12 @@
 Revision history for cpan2rpm
 
-2.004  2002/12/10 15:00:00
+2.005  2002/12/12 17:00:00
+- Added -V option to return cpan2rpm version.
+- Added --shadow-pure option to hide previous
+  installations of pure perl modules while
+  installing new versions of the same module.
+
+2.004  2002/12/10 12:00:00
 - Moved changelog from cpan2rpm into Changes file.
 - Unbreak the PREFIX= bug from Revision 1.81.
 - Now works with both perl 5.6.1 and 5.8.0.

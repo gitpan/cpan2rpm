@@ -4,8 +4,8 @@
 #   CPAN module RPM maker
 #
 
-use vars qw($VERSION);
-$VERSION = 2.004;
+use vars qw($VERSION $VX);
+$VERSION = 2.005;
 
 # --- prologue ----------------------------------------------------------------
 
@@ -76,6 +76,7 @@ sub init {
         ,    "make-no-test"     => "suppress running test suite"
         ,    "make-install=s"   => "arguments for make install"
         ,    "no-clean"         => "suppress --clean"
+        ,    "shadow-pure"      => "override existing pure perl module"
         ,    "patch|p=s@"       => "specifies (multiple) patches to apply"
         ,    "install|i"        => "install package when done"
         ,    "description=s"    => "package description"
@@ -83,11 +84,15 @@ sub init {
         ,    "force"            => "forces all operations"
         ,    "debug:i"          => "produce debugging output"
         ,    "help|h"           => "this help screen"
+        ,    "V"                => "cpan2rpm version"
         );
 
     # get user options
     my %opts = ();
     my $ret = GetOptions(\%opts, keys %desc);
+
+	$VX++, exit if $opts{V};
+
     print "\n-- cpan2rpm - Ver: $::VERSION --\n\n" if !$opts{"spec-only"};
     syntax(\%desc) if defined $opts{help} || !$ret;
 
@@ -124,7 +129,6 @@ sub init {
                 print "\n-- NON ROOT sudo precheck successful.\n";
                 }
             }
-
         }
     $RPMDIR{SOURCES} = getrpm_macdef("_sourcedir");
     $RPMDIR{RPMS} = getrpm_macdef("_rpmdir");
@@ -172,7 +176,9 @@ sub init {
 END {
     chdir $CWD;
     qx/rm -rf $TMPBUILD/ if $TMPBUILD && !$info{debug};
-    print "-- Done --\n" if !$info{"spec-only"};
+	print("$VERSION\n") if $VX;
+	return if $info{"spec-only"} || $VX;
+    print "-- Done --\n";
     }
 
 #
@@ -332,6 +338,15 @@ sub mk_spec {
     else {
         $info{"make-install"} .= ' PREFIX=$RPM_BUILD_ROOT%{_prefix}';
         }
+    if ($info{"shadow-pure"}) {
+        $info{"make-maker"} .= q{
+            # Force pure perl installs into first @INC slot
+            %{__perl} -p -i -e 's,(INSTALL[PVS]\w+LIB =).*,$1 \$(INSTALLARCHLIB),' Makefile;
+
+            # Avoid man page conflicts with default
+            %{__perl} -p -i -e 's,(MAN3EXT =).*,$1 3,' Makefile;
+            };
+        }
 
     local $_ = <<ZZ;
         #
@@ -387,8 +402,6 @@ sub mk_spec {
         [ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
         $info{"no-requires"}{"install"}
 
-        eval `perl '-V:installarchlib'`
-        mkdir -p \$RPM_BUILD_ROOT/\$installarchlib
         %{makeinstall} $info{"make-install"}
 
         [ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
@@ -834,10 +847,9 @@ EOF
     print "Proc::Daemon) or of a tarball (e.g. Proc-Daemon-0.02.tar.gz),\n";
     print "and [options] is any of the following:\n\n";
     for (sort keys %$args) {
-        my ($arg, $a, $s) = split /[:=|]/;
-        $a = $arg, $arg = "" if !$a && length($arg) == 1;
-        $a = "-$a" if $a;
-        $arg = "--$arg" if $arg;
+        my ($arg) = split /[:=|]/;
+        $arg = "-$arg" if length($arg) > 1;
+        $arg = "-$arg" if $arg;
         printf("  %-15s %s\n", $arg, $args->{$_});
         }
     print "\n";
@@ -976,6 +988,33 @@ Allows user to supply arguments to the make install process.
 
 By default, the system passes I<--clean> to I<rpmbuild>, thus removing the unpacked sources from the BUILD directory.  This option suppresses that functionality.
 
+=item I<--shadow-pure>
+
+Forces installation under installarchlib even if the
+module is pure perl.  This is significant because it
+is first in the @INC search for module determination.
+This will not do any good for modules with XS code
+or those that are already installed into an
+architecture dependent path.  This is most useful
+for those pure perl modules that come stock with the
+perl rpm itself (i.e. Test::Harness) but you wish
+to try another version without having to be forced
+to use "rpm --replacefiles" and destroying the old
+files.  Using this option will allow both versions
+of the module to be installed, but the new version
+will just mask the old version later in the @INC.
+Additionally, the new man pages will mask the old
+man pages even though the man pages for both version
+will be installed.  This option should only be used
+as a last resort to install a module when "conflicts"
+errors occur on rpm installation such as the following:
+
+  file from install of perl-Module-1.11-1 conflicts with file from package perl-5.x.x
+
+Use may be required to use --force (see below) in
+conjuction with this option to build a fresh rpm
+before attempting to --install again.
+
 =item I<--patch=C<string-value>>
 
 This option allows specifying patch files to be inserted into the spec file and applied when building the source.  Please note the option may be used multiple time to specify multiple patches.
@@ -986,7 +1025,12 @@ Suppresses prefixing the package name with the string C<perl->.
 
 =item I<--force>
 
-By default the script will do as little work as possible i.e. if it has alreaddy previously retrieved a module from CPAN, it will not retrieve it again.  If it has already generated a spec file it will not generate it again.  This option allows the packager to force all actions, starting from scratch.
+By default the script will do as little work as possible i.e. if it has already previously retrieved a module from CPAN, it will not retrieve it again.  If it has already generated a spec file it will not generate it again.  This option allows the packager to force all actions, starting from scratch.
+
+=item I<--install>
+
+Install the RPM after building it.  If non-root user, you
+must have "sudo rpm" privileges to use this option.
 
 =item I<--debug[=n]>
 
@@ -1037,6 +1081,6 @@ F<http://perl.arix.com/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.5 2002/12/10 19:47:29 bbb Exp $
+$Id: cpan2rpm,v 2.11 2002/12/12 23:35:40 bbb Exp $
 
 =cut

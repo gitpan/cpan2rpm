@@ -6,11 +6,12 @@ WriteMakefile(
 	VERSION_FROM => "cpan2rpm",
 	ABSTRACT_FROM => "cpan2rpm",
 	EXE_FILES => [ "cpan2rpm" ],
+	PREREQ_PM => {
+          'HTTP::Lite'    => '0',
+        },
 	);
 
 package MY;
-
-$pkg = "cpan2rpm";
 
 sub libscan {
 	my $self = shift;
@@ -22,8 +23,8 @@ sub postamble {
 	return <<EOF;
 pm_to_blib: README
 
-README: $pkg
-	pod2text cpan2rpm > README
+README: \$(VERSION_FROM)
+	pod2text \$(VERSION_FROM) > README
 EOF
 	}
 

@@ -10,7 +10,7 @@
 #
 
 use vars qw($VERSION);
-$VERSION = substr q$Revision: 1.46 $, 10;
+$VERSION = substr q$Revision: 1.49 $, 10;
 
 # --- prologue ----------------------------------------------------------------
 
@@ -49,7 +49,7 @@ sub init {
 		,	license			=> "Artistic"
 		,	release			=> 1
 		,	buildarch		=> "i386"
-		,	buildroot		=> "%{_tmppath}/%{name}-%{version}"
+		,	buildroot		=> "%{_tmppath}/%{name}-%{version}-%(id -u -n)"
 		,	description		=> "None."
 		);
 
@@ -196,7 +196,7 @@ sub get_meta {
 	if (!$meta{ABSTRACT} && $from) {
 		local $_ = $from;
 		($meta{ABSTRACT}) = /=head\d\s+NAME.*?-\s*(.*?)$/ism;
-		($meta{DESCRIPTION}) = /=head\d\s+DESCRIPTION\s+(.*?)=head/ism;
+		($meta{DESCRIPTION}) = /=head\d\s+SYNOPSIS\s+(.*?)=head/ism;
 		$meta{DESCRIPTION} =~ s/E<lt>/</ig;
 		$meta{DESCRIPTION} =~ s/E<gt>/>/ig;
 		}
@@ -295,7 +295,7 @@ sub mk_spec {
 
 		%description
 		$info{description}
-		
+
 		#
 		# This package was automatically generated with the cpan2rpm
 		# utility.  To get this software or for more information
@@ -689,15 +689,17 @@ cpan2rpm - A Perl module packager
 
 cpan2rpm [options] <module>
 
+This script generates an RPM package from a Perl module.  It uses the standard RPM file structure and creates a spec file, a source RPM, and a binary, leaving these in their respective directories.
+
+The script can operate on local files, urls and CPAN module names.  Install this package if you want to create RPMs out of Perl modules.
+
 =head1 DESCRIPTION
 
-This script will generate an RPM package from a Perl module.  It uses the standard RPM file structure and creates a spec file, a source RPM, and a binary, leaving these in their respective directories.
+The syntax for cpan2rpm requires a single module name, which can take one of three different forms: 1) a CPAN module name (e.g. XML::Simple), 2) a URL (both http:// and ftp:// style locators will work), and 3) a local filename reference to a tarball (e.g. /tmp/XML-Simple-1.05.tar.gz).  The module name may be preceded by a number of optional arguments which modify the behaviour of the script.
 
-The directory structure used follows the definition rules RPM uses whereby F</usr/lib/rpm/macros> is used by default but may be overridden by macros in F</etc/rpm/macros> and F<~/.rpmmacros> in that order.
+If the <module> passed is either a CPAN module name or a URL the script automatically does a download (when CPAN module names are specified, the latest distribution is used), putting it in the SOURCES directory.  If <module> is given as a local filename, the tarball gets copied to the SOURCES directory.  NOTE: at present the script will not handle .bz2 tarballs.
 
-If the <module> passed is either a CPAN module name (e.g. XML::Simple) or a URL (both http:// and ftp:// style locators will work) the script automatically downloads the given module (when CPAN module names are specified, the latest distribution is used), putting it in the SOURCES directory.  If <module> is a local filename reference (e.g. /tmp/XML-Simple-1.05.tar.gz), the tarball gets copied to the SOURCES directory.
-
-Headers in the spec will generally assume any values configured in the RPM macro files as described above.  Use of any particular option will override the internally calculated or configured values.  Whenever a header is neither configured in the RPM macro files nor is passed at the command line, the script will seek to calculate a proper value and supplies a default as stated for each option below.  It is thus typicall sufficient to provide only the <module>.
+The spec file generated will generally assume header values as configured in the RPM macro files which are evaluated in the following order: F</usr/lib/rpm/macros>, F</etc/rpm/macros> and F<~/.rpmmacros>.  Most of these headers can, however, be overridden through options.  Whenever a header is neither configured in the RPM macro files nor is passed at the command line, the script will seek to calculate a proper value and supplies a default as stated for each option below.  It is thus typicall sufficient to provide only the <module> name.
 
 The C<options> available are as follows:
 
@@ -721,7 +723,7 @@ A one-line description of the package.  If left unspecified the script will use 
 
 =item I<--description=C<string-value>>
 
-This text describes the package/module.  This value is picked up from the POD in the module.  Defaults to "None.".
+This text describes the package/module.  This value is picked up from the POD's Synopsis section in the module.  Defaults to "None.".
 
 =item I<--url=C<string-value>>
 
@@ -804,7 +806,7 @@ For further information please refer to the CPAN manpage.
 
 =head1 TODO
 
-I'm happy to work on any feature requests you may send me :) but in the meantime these are the things waiting for attention:
+I'm happy to work on any feature requests you may have :)
 
 =head1 BUGS
 
@@ -825,6 +827,16 @@ F<http://perl.arix.com/>
 =head1 CHANGES
 
 $Log: cpan2rpm,v $
+Revision 1.49  2002/06/03 14:17:11  bbb
+Add username to buildroot to avoid multi-user machine conflicts.
+
+Revision 1.48  2002/06/01 01:07:38  ekkis
+minor POD change
+
+Revision 1.47  2002/06/01 01:04:24  ekkis
+- now uses the POD's Synopsis section for the RPM Description tag.  This is the way it should be since POD Descriptions typically contain large amounts of text.
+- Rewrote Synopsis and Description sections of the POD
+
 Revision 1.46  2002/05/31 23:59:33  ekkis
 - changed shebang line to make MakeMaker happy (thx Hook BOT)
 

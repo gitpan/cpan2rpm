@@ -11,7 +11,7 @@ DESCRIPTION
 
     The directory structure used follows the definition rules RPM uses
     whereby /usr/lib/rpm/macros is used by default but may be overridden by
-    macros in /etc/rpm/macros and ~/.rpmmacrocs in that order.
+    macros in /etc/rpm/macros and ~/.rpmmacros in that order.
 
     If the <module> passed is either a CPAN module name (e.g. XML::Simple)
     or a URL (both http:// and ftp:// style locators will work) the script
@@ -165,8 +165,24 @@ AVAILABILITY
     http://perl.arix.com/
 
 CHANGES
-    $Log: cpan2rpm,v $ Revision 1.43 2002/05/28 23:32:29 ekkis changed
-    e-mail addresses
+    $Log: cpan2rpm,v $ Revision 1.46 2002/05/31 23:59:33 ekkis - changed
+    shebang line to make MakeMaker happy (thx Hook BOT)
+
+    Revision 1.45 2002/05/31 23:35:40 ekkis - redesigned the %files section
+    (at the suggestion of Eric Kolve [ekolve@corp.classmates.com]) to fix
+    problems with modules that contain XS e.g. DBI - added a smart %doc
+    section which picks up documentation from the tarball (with help from
+    Hook-BOT (Bob Brown <bbb@cpan.org>) for file regexp) - now uses
+    %{_prefix} to list files which is better than /usr since it allows
+    redefinition e.g. _prefix=/usr/local (Hook-BOT) - trimmed descriptions
+    and reformatted ad banner - improved %clean section with code that wipes
+    the extracted source tree structure after building (which can bloat disk
+    badly when doing a lot of rpms) - thx Hook-BOT! - fixed --spec-only (thx
+    Eric Kolve)
+
+    Revision 1.44 2002/05/29 16:32:10 bbb ~/.rpmmacros
+
+    Revision 1.43 2002/05/28 23:32:29 ekkis changed e-mail addresses
 
     Revision 1.42 2002/05/28 23:13:28 bbb Same as second round "1.3" but in
     the right place now.

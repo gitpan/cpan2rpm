@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl
 
 #
 #   CPAN module RPM maker
@@ -10,7 +10,7 @@
 #
 
 use vars qw($VERSION);
-$VERSION = substr q$Revision: 1.43 $, 10;
+$VERSION = substr q$Revision: 1.46 $, 10;
 
 # --- prologue ----------------------------------------------------------------
 
@@ -117,7 +117,7 @@ sub init {
 			|| die "Unable to copy tarball: $!"
 			unless finode($info{module}) eq finode("$RPMDIR{SOURCES}/$f")
 			;
-		
+
 		$info{module} =~ s|.*/||; 	# remove path
 		$info{tarball} = $info{module};
 		$info{module} =~ s/-(\d+\.?\d*)\.(tar\.g?z|tgz)$//;
@@ -145,11 +145,19 @@ END {
 sub get_meta {
 	my $f = shift || "$RPMDIR{SOURCES}/$info{tarball}";
 
-	$info{tardir} = tarls($f);
+	my @ls;
+	($info{tardir}, @ls) = tarls($f);
 	$info{create} = "-c" if $info{tardir} =~ s/\+$//;
 
+	#	create file-list for spec's %doc section
+
+	@ls = map(m|.*/(.*)|, @ls);	# strip leading dir
+	my $re = "(readme|changes|todo|license|install|\.txt|\.html)";
+	$info{doc} = join(" ", grep(/$re/i, @ls));
+	$info{doc} = "%doc $info{doc}" if $info{doc};
+
  	#	extract tarball
- 
+
  	print "Tarball extraction: [$f]\n";
 	chdir($TMPBUILD = untar($f));
 
@@ -256,6 +264,7 @@ sub mk_spec {
 
 	my $pkgname = $info{pkgname};
 	$pkgname = "perl-" . $pkgname unless $info{nopkgprfx};
+	$info{description} =~ s/\s+$//;
 
 	local $_ = <<ZZ;
 		#
@@ -286,12 +295,12 @@ sub mk_spec {
 
 		%description
 		$info{description}
-		----
-		This package was automatically generated with the cpan2rpm utility.
-		To get this software or for more information please visit:
-
-		http://perl.arix.com/
-		----
+		
+		#
+		# This package was automatically generated with the cpan2rpm
+		# utility.  To get this software or for more information
+		# please visit: http://perl.arix.com/
+		#
 		$info{"find-provides"}
 		$info{"find-requires"}
 
@@ -303,10 +312,6 @@ sub mk_spec {
 		perl Makefile.PL $info{"make-maker"}
 		make
 
-		%clean 
-		[ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
-		$info{"no-requires"}{"clean"}
-
 		%install
 		[ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
 		$info{"no-requires"}{"install"}
@@ -317,18 +322,22 @@ sub mk_spec {
 
 		[ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
 
-		find \$RPM_BUILD_ROOT/usr -type f -print | \
-			sed "s\@^\$RPM_BUILD_ROOT\@\@g" | \
-			grep -v perllocal.pod | \
-			grep -v "\\.packlist" > %{filelist}
+		find \$RPM_BUILD_ROOT -name "perllocal.pod" \\
+		    -o -name ".packlist"                    \\
+		    -o -name "*.bs"                         \\
+		    |xargs -i rm -f {}
 
-		[ "\$(cat %{filelist})" = "" ] && {
-    		echo "ERROR: EMPTY FILE LIST"
-    		exit -1
-			}
+		find \$RPM_BUILD_ROOT%{_prefix} -type d | tac | xargs rmdir --ign
 
-		%files -f %{filelist}
+		%clean
+		[ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
+		$info{"no-requires"}{"clean"}
+		HERE=\$(pwd); cd ..; rm -rf \$HERE
+
+		%files
 		%defattr(-,root,root)
+		$info{doc}
+		%{_prefix}
 
 		%changelog
 		* $info{changelog}
@@ -336,7 +345,7 @@ sub mk_spec {
 ZZ
 	s/^\t\t//gm;	# clean up
 
-	print, exit if $info{"spec-only"};
+	print(), exit if $info{"spec-only"};
 	writefile($info{spec});
 	}
 
@@ -396,7 +405,7 @@ sub get_mod {
 
 	my $m = CPAN::Shell->expand("Module", $info{module})
 		|| die "Module not found on CPAN!";
-	
+
 	my $a = CPAN::Shell->expand("Author", $m->{RO}->{CPAN_USERID});
 	$info{author} ||= "$a->{RO}->{FULLNAME} <$a->{RO}->{EMAIL}>";
 
@@ -565,7 +574,7 @@ sub writefile($@) {
 	close(FILE);
 	$fn;
 	}
-	
+
 #	0: dev, 1: inode, the combination guarantees
 #	a unique file in a filesystem
 
@@ -600,7 +609,7 @@ sub get_url($@) {
 	$http->request($info{source}) || die "get_url(): $!.  Stopped";
 	writefile("$d/$info{tarball}", $http->body());
 	}
-	
+
 # --- miscellany --------------------------------------------------------------
 
 #
@@ -684,7 +693,7 @@ cpan2rpm [options] <module>
 
 This script will generate an RPM package from a Perl module.  It uses the standard RPM file structure and creates a spec file, a source RPM, and a binary, leaving these in their respective directories.
 
-The directory structure used follows the definition rules RPM uses whereby F</usr/lib/rpm/macros> is used by default but may be overridden by macros in F</etc/rpm/macros> and F<~/.rpmmacrocs> in that order.
+The directory structure used follows the definition rules RPM uses whereby F</usr/lib/rpm/macros> is used by default but may be overridden by macros in F</etc/rpm/macros> and F<~/.rpmmacros> in that order.
 
 If the <module> passed is either a CPAN module name (e.g. XML::Simple) or a URL (both http:// and ftp:// style locators will work) the script automatically downloads the given module (when CPAN module names are specified, the latest distribution is used), putting it in the SOURCES directory.  If <module> is a local filename reference (e.g. /tmp/XML-Simple-1.05.tar.gz), the tarball gets copied to the SOURCES directory.
 
@@ -816,6 +825,20 @@ F<http://perl.arix.com/>
 =head1 CHANGES
 
 $Log: cpan2rpm,v $
+Revision 1.46  2002/05/31 23:59:33  ekkis
+- changed shebang line to make MakeMaker happy (thx Hook BOT)
+
+Revision 1.45  2002/05/31 23:35:40  ekkis
+- redesigned the %files section (at the suggestion of Eric Kolve [ekolve@corp.classmates.com]) to fix problems with modules that contain XS e.g. DBI
+- added a smart %doc section which picks up documentation from the tarball (with help from Hook-BOT (Bob Brown <bbb@cpan.org>) for file regexp)
+- now uses %{_prefix} to list files which is better than /usr since it allows redefinition e.g. _prefix=/usr/local (Hook-BOT)
+- trimmed descriptions and reformatted ad banner
+- improved %clean section with code that wipes the extracted source tree structure after building (which can bloat disk badly when doing a lot of rpms) - thx Hook-BOT!
+- fixed --spec-only (thx Eric Kolve)
+
+Revision 1.44  2002/05/29 16:32:10  bbb
+~/.rpmmacros
+
 Revision 1.43  2002/05/28 23:32:29  ekkis
 changed e-mail addresses
 

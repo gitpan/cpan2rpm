@@ -1,0 +1,5 @@
+README
+MANIFEST
+Makefile.PL
+cpan2rpm
+t/100_compile.t

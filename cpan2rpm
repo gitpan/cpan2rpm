@@ -1,0 +1,1023 @@
+#!/usr/bin/env perl
+
+#
+#   CPAN module RPM maker
+#
+#	Author	: Erick Calder
+#	URL		: http://perl.arix.com/
+#	Support	: <perl@arix.com>
+#	License	: GPL
+#
+
+use vars qw($VERSION);
+$VERSION = substr q$Revision: 1.43 $, 10;
+
+# --- prologue ----------------------------------------------------------------
+
+use strict;
+use Getopt::Long;
+use HTTP::Lite;
+use Sys::Hostname;
+use CPAN 0.59;
+
+# --- main() ------------------------------------------------------------------
+
+init();			# initialise stuff
+get_meta();		# get metadata from tarball
+mk_spec();		# create a custom spec file
+mk_rpm();		# build the RPM
+inst_rpm();		# install it if requested
+
+# --- support functionality ---------------------------------------------------
+
+my ($TMPDIR, $TMPBUILD, %RPMDIR, $CWD, %MAC, %info);
+
+sub init {
+	$|++;	# good for system()
+
+	print "\n-- cpan2rpm - Ver: $::VERSION --\n\n";
+
+	$TMPDIR	= "/tmp/cpan2rpm";
+	$CWD	= qx/pwd/; chomp($CWD);
+	mkdir $TMPDIR || die $!;
+
+	# package info defaults
+	%info =
+		(	url				=> "http://www.cpan.org"
+		,	packager		=> "Arix International <cpan2rpm\@arix.com>"
+		,	group			=> "Applications/CPAN"
+		,	license			=> "Artistic"
+		,	release			=> 1
+		,	buildarch		=> "i386"
+		,	buildroot		=> "%{_tmppath}/%{name}-%{version}"
+		,	description		=> "None."
+		);
+
+	# syntax descriptions
+	my %desc =
+		(	"pkgname=s"		=> "RPM package name"
+		,	"version=s"		=> "override the CPAN version number"
+		,	"summary=s"		=> "package summary"
+		,	"author=s"		=> "author information"
+		,	"url=s"			=> "home URL"
+		,	"packager=s"	=> "packager identification"
+		,	"group=s"		=> "RPM group"
+		,	"license=s"		=> "licensing information"
+		,	"release=i"		=> "RPM relase number"
+		,	"distribution=s" => "Linux distribution"
+		,	"buildarch=s"	=> "package architecture"
+		,	"buildroot=s"	=> "root directory to use for build"
+		,	"requires=s"	=> "packages required for installation"
+		,	"provides=s"	=> "modules provided by the package"
+		,	"no-requires=s"	=> "suppresses generation of a set of reqs"
+		,	"find-provides=s"	=> "instructs us to use a given filter"
+		,	"find-requires=s"	=> "(see man page for further details)"
+		,	"spec-only"		=> "only displays spec file to stdout"
+		,	"make-maker=s"	=> "parameters for makefile creation"
+		,	"install|i"		=> "install package when done"
+		,	"description=s" => "package description"
+		,	"nopkgprfx"		=> "suppresses package name prefix"
+		,	"force"			=> "forces all operations"
+		,	"debug:i"		=> "produce debugging output"
+		,	"help|h"		=> "this help screen"
+		);
+
+	# get user options
+	my %opts = ();
+	GetOptions(\%opts, keys %desc) || syntax(\%desc);
+	syntax(\%desc) if defined $opts{help};
+
+	# override defauls with user options
+	%info = (%info, %opts);
+
+	# get module name
+	$info{module} = shift @ARGV
+		|| syntax(\%desc, "No module or file specified!");
+
+	$RPMDIR{SOURCES} = getrpm_macdef("_sourcedir");
+	$RPMDIR{RPMS} = getrpm_macdef("_rpmdir");
+	$RPMDIR{SPECS} = getrpm_macdef("_specdir");
+
+	if (isurl($info{module})) {
+		#
+		#	a url was passed
+		#
+
+		get_url($RPMDIR{SOURCES}, $info{module});
+		}
+
+	elsif (istarball($info{module}, 1)) {
+		#
+		#	argument passed is a local file name
+		#
+
+		my ($d, $f) = $info{module} =~ m|(.*?)/?([^/]*)$|;
+
+		system("cp -u $info{module} $RPMDIR{SOURCES}") == 0
+			|| die "Unable to copy tarball: $!"
+			unless finode($info{module}) eq finode("$RPMDIR{SOURCES}/$f")
+			;
+		
+		$info{module} =~ s|.*/||; 	# remove path
+		$info{tarball} = $info{module};
+		$info{module} =~ s/-(\d+\.?\d*)\.(tar\.g?z|tgz)$//;
+		$info{module} =~ s/-/::/g;
+		}
+
+	else {
+		#
+		#	assume argument passed is a Perl module name
+		#
+
+		get_mod();
+		}
+	}
+
+END {
+	chdir $CWD;
+	qx/rm -rf $TMPBUILD/ if $TMPBUILD && !$info{debug};
+	}
+
+#
+#	get metadata from tarball's MakeMaker file
+#
+
+sub get_meta {
+	my $f = shift || "$RPMDIR{SOURCES}/$info{tarball}";
+
+	$info{tardir} = tarls($f);
+	$info{create} = "-c" if $info{tardir} =~ s/\+$//;
+
+ 	#	extract tarball
+ 
+ 	print "Tarball extraction: [$f]\n";
+	chdir($TMPBUILD = untar($f));
+
+	#	execute modified Makefile.PL
+
+	print "Metadata retrieval\n";
+
+	my %meta;
+	# grap parameters to WriteMakefile()
+	sub MyWriteMakefile {
+		%meta = @_;
+		};
+
+	local $_ = qq/package make; no strict; local (*STDOUT, *STDERR) = (); /;
+	$_ .= qq/$ARGV[0] = $info{"make-maker"}; / if $info{"make-maker"};
+	$_ .= readfile("Makefile.PL");
+	s/(qw\(.*)WriteMakefile(.*\))/$1$2/g;
+	s/(ExtUtils::MakeMaker::)?WriteMakefile/::MyWriteMakefile/g;
+	s/(\W)exit(\W)/${1}die$2/g;
+	eval() || warn $!;
+	$info{author} ||= $meta{AUTHOR};
+
+	#	figure out package name
+
+	$info{pkgname} ||= $meta{NAME} || $info{module};
+	$info{pkgname} =~ s/::/-/g;
+	die "No package name available.  Stopped"
+		unless $info{pkgname};
+
+	#	get module description info
+
+	my $from = $meta{ABSTRACT_FROM} || $meta{VERSION_FROM};
+	($from = "$info{pkname}.pm") =~ s/.*:// unless $from;
+	$from = readfile($from);
+
+	if (!$meta{ABSTRACT} && $from) {
+		local $_ = $from;
+		($meta{ABSTRACT}) = /=head\d\s+NAME.*?-\s*(.*?)$/ism;
+		($meta{DESCRIPTION}) = /=head\d\s+DESCRIPTION\s+(.*?)=head/ism;
+		$meta{DESCRIPTION} =~ s/E<lt>/</ig;
+		$meta{DESCRIPTION} =~ s/E<gt>/>/ig;
+		}
+
+	if (!$info{author} && $from) {
+		local $_ = $from;
+		($info{author}) = /=head\d\s+AUTHOR\s+(.*?)=head/ism;
+		$info{author} =~ s/E<lt>/</ig;
+		$info{author} =~ s/E<gt>/>/ig;
+		}
+
+	die "No author information found and none supplied.  Stopped"
+		unless $info{author};
+
+	#	extract version from tarball name
+
+	unless ($info{version}) {
+		$info{tarball} =~ /-(\d+.*)\.(tar\.g?z|tgz)$/;
+		$info{version} = $1
+			|| die "Could not ascertain version and none passed!";
+		}
+
+	#	assemble other info
+
+	$info{spec} = "$RPMDIR{SPECS}/$info{pkgname}.spec";
+	$info{summary} = "$info{pkgname} - " . ($meta{ABSTRACT} || "Perl module");
+	$info{description} = $meta{DESCRIPTION} if $meta{DESCRIPTION};
+	$info{source} ||= $info{tarball};
+	$info{source} =~ s/$info{pkgname}/%{pkgname}/;
+	$info{source} =~ s/$info{version}/%{version}/;
+	$info{distribution} = getrpm_macdef("distribution") || distro();
+	$info{changelog} = changelog();
+
+	$info{requires} &&= "Requires: $info{requires}";
+	$info{provides} &&= "Provides: $info{provides}";
+
+	$info{"find-provides"}
+		&&= qq/%define __find_provides $info{"find-provides"}/;
+	$info{"find-requires"}
+		&&= qq/%define __find_requires $info{"find-requires"}/;
+	if ($info{"no-requires"}) {
+		my $noreqs = "";
+		$noreqs .= qq/-e '$_' / for split /\s*,\s*/, $info{"no-requires"};
+		$info{"no-requires"}{"define"}
+			= "%define custom_find_req %{_tmppath}/%{NVR}-find-requires";
+		$info{"find-requires"} = "%define __find_requires %{custom_find_req}";
+		local $_ = qq[cat <<EOF > %{custom_find_req}
+			#!/bin/sh
+			/usr/lib/rpm/find-requires |grep -v $noreqs
+			EOF
+			chmod 755 %{custom_find_req}
+			];
+		s/\t*//mg;
+		$info{"no-requires"}{"install"} = $_;
+		$info{"no-requires"}{"clean"} = "rm -f %{custom_find_req}";
+		}
+	}
+
+#
+#	generate s spec file
+#
+
+sub mk_spec {
+	print "-- Generating spec file --\n";
+
+	my $pkgname = $info{pkgname};
+	$pkgname = "perl-" . $pkgname unless $info{nopkgprfx};
+
+	local $_ = <<ZZ;
+		#
+		#	cpan2rpm - This spec file was automatically generated.
+		#	For further information please refer to: http://perl.arix.com/
+		#
+
+		%define pkgname	$info{pkgname}
+		%define filelist %{pkgname}-%{version}-filelist
+		%define NVR %{pkgname}-%{version}-%{release}
+		$info{"no-requires"}{"define"}
+
+		Summary:       $info{summary}
+		Name:          $pkgname
+		Version:       $info{version}
+		Release:       $info{release}
+		Group:         $info{group}
+		Distribution:  $info{distribution}
+		Vendor:        $info{author}
+		Packager:      $info{packager}
+		License:       $info{license}
+		Source:        $info{source}
+		Url:           $info{url}
+		BuildRoot:     $info{buildroot}
+		BuildArch:     $info{buildarch}
+		$info{requires}
+		$info{provides}
+
+		%description
+		$info{description}
+		----
+		This package was automatically generated with the cpan2rpm utility.
+		To get this software or for more information please visit:
+
+		http://perl.arix.com/
+		----
+		$info{"find-provides"}
+		$info{"find-requires"}
+
+		%prep
+		%setup -q -n $info{tardir} $info{create}
+
+		%build
+		CFLAGS="\$RPM_OPT_FLAGS"
+		perl Makefile.PL $info{"make-maker"}
+		make
+
+		%clean 
+		[ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
+		$info{"no-requires"}{"clean"}
+
+		%install
+		[ "\$RPM_BUILD_ROOT" != "/" ] && rm -rf \$RPM_BUILD_ROOT
+		$info{"no-requires"}{"install"}
+
+		eval `perl '-V:installarchlib'`
+		mkdir -p \$RPM_BUILD_ROOT/\$installarchlib
+		make PREFIX=\$RPM_BUILD_ROOT/usr install
+
+		[ -x /usr/lib/rpm/brp-compress ] && /usr/lib/rpm/brp-compress
+
+		find \$RPM_BUILD_ROOT/usr -type f -print | \
+			sed "s\@^\$RPM_BUILD_ROOT\@\@g" | \
+			grep -v perllocal.pod | \
+			grep -v "\\.packlist" > %{filelist}
+
+		[ "\$(cat %{filelist})" = "" ] && {
+    		echo "ERROR: EMPTY FILE LIST"
+    		exit -1
+			}
+
+		%files -f %{filelist}
+		%defattr(-,root,root)
+
+		%changelog
+		* $info{changelog}
+		- Initial build.
+ZZ
+	s/^\t\t//gm;	# clean up
+
+	print, exit if $info{"spec-only"};
+	writefile($info{spec});
+	}
+
+#
+#	build the package
+#
+
+sub mk_rpm {
+	$info{rpm} = sprintf("%s/perl-%s-%s-%s.%s.rpm"
+		, "$RPMDIR{RPMS}/$info{buildarch}"
+		, $info{pkgname}
+		, $info{version}
+		, $info{release}
+		, $info{buildarch}
+		);
+
+	return if -r $info{rpm} && !$info{force};
+
+	print "-- Generating package --\n";
+
+	my $ret = 0;
+
+	system("rpm -bp $info{spec}");
+	warn("RPM test unpacking failed!") if $ret = $? >> 8;
+
+	if ($ret == 0) {
+		system("rpm -ba $info{spec}");
+		warn("RPM build failed!") if $ret = $? >> 8;
+		}
+
+	return $ret;
+	}
+
+#
+#	if requested, will also install the resulting RPM
+#
+
+sub inst_rpm {
+	return unless $info{install};
+
+	print "-- Installing package --\n";
+	system("rpm -ivh $info{rpm}");
+	return $? >> 8;
+	}
+
+# --- module retrieval functions ----------------------------------------------
+
+#
+#	grabs the module from CPAN and places in the SOURCES directory
+#	ACHTUNG: at present, only the latest version of the module
+#	can be retrieved.  For building earlier versions, retrieve the
+#	tarball manually.
+#
+
+sub get_mod {
+	print "-- Retrieving module from CPAN --\n";
+
+	my $m = CPAN::Shell->expand("Module", $info{module})
+		|| die "Module not found on CPAN!";
+	
+	my $a = CPAN::Shell->expand("Author", $m->{RO}->{CPAN_USERID});
+	$info{author} ||= "$a->{RO}->{FULLNAME} <$a->{RO}->{EMAIL}>";
+
+	my $f = $m->{RO}->{CPAN_FILE};
+	$info{source} = sprintf("%s/authors/id/%s"
+		, "http://www.cpan.org"
+		, $f
+		);
+
+	my $tarball = $f; $tarball =~ s|.*/||;
+	$info{tarball} = $tarball;
+
+	# bail if tarball already there (unless we're being --force'd)
+	return if -r "$RPMDIR{SOURCES}/$tarball"
+		&& ! defined $info{force}
+		;
+
+	get($f);
+
+	my $ff = sprintf("%s/authors/id/%s"
+		, $CPAN::Config->{'keep_source_where'}
+		, $f
+		);
+
+	system("cp $ff $RPMDIR{SOURCES}") if -r $ff;
+	}
+
+# --- RPM macro functions -----------------------------------------------------
+
+sub getrpm_init {
+	return if %MAC;
+
+	my @f = (
+		  "/usr/lib/rpm/macros"		# orginal definitions
+		, "/etc/rpm/macros"			# site-wide overrides
+		, "$ENV{HOME}/.rpmmacros"	# user-specific overrides
+		);
+
+	for (@f) {
+		%MAC = (%MAC, getrpm_macros()) if -r;
+		}
+	}
+
+#
+#	get an RPM macro definition
+#
+
+sub getrpm_macdef($) {
+	my $key = shift;
+
+	getrpm_init();
+	1 while $MAC{$key} =~ s/%{([^}]+)}/$MAC{$1}/;
+	return $MAC{$key};
+	}
+
+#
+#	retrieves macro definitions from a file
+#
+
+sub getrpm_macros {
+	local $_ = shift || $_;
+	open(F, $_) || die $!;
+	my %ret = ();
+	for (<F>) {
+		next unless s/^%//;
+		split;
+		$ret{$_[0]} = $_[1];
+		}
+	close(F);
+	return %ret;
+	}
+
+# --- tar handling functions --------------------------------------------------
+
+#
+#	determines whether given filename represents a tarball
+#	optionally dies it file doesn't exist or is not readable
+#
+
+sub istarball {
+	my ($fn, $fschk) = @_;
+	my $is = $fn =~ /\.(tar\.g?z|tgz)$/i;
+	return $is unless $fschk && $is;
+	-r $fn || die "tarball: $!";
+	}
+
+#
+#	returns the root dir in a tarball (without trailing /)
+#	followed by a listing of all files in the directory
+#
+
+sub tarls {
+	my $f = shift || $_;
+
+	my ($d, @f);
+	for (qx/tar -tzvf $f/) {
+		split; local $_ = $_[5];
+		$_[0] =~ /^d/ && ($d ||= $_) || (push @f, $_);
+		}
+
+	for (@f) {						# look in file listing
+		last if $d;					# never mind if dir found
+		$d = $_ if s|/.*||;			# strip dir from filename
+		}
+
+	if (!$d) {						# if still no subdir found
+		local $_ = $f;				# assume tardir
+		s|.*/||;					# without path
+		s/\.(tar\.g?z|tgz)$//i;		# or extension
+		$d = "$_+";					# and indicate we made it up
+		}
+
+	$d =~ s|/.*||;					# make sure subdir found is top level
+	wantarray() ? ($d, @f) : $d;	# context aware
+	}
+
+#
+#	extracts a file from a tarball
+#
+
+sub tarx($$) {
+	my ($tar, $f) = @_;
+	local $_ if defined wantarray();
+	$_ = qx/tar -xzOf $tar $f/;
+	}
+
+#
+#	extracts a tarball
+#
+
+sub untar($) {
+	my ($tar, $dst) = @_;
+	$dst ||= $TMPDIR;
+	qx/tar -xz --directory $dst -f $tar/;
+	return "$TMPDIR/" . tarls($tar);
+	}
+
+# --- file handling functions -------------------------------------------------
+
+#
+#	returns the contents of a given file or undef if the
+#	file does not exist
+#
+
+sub readfile($) {
+	my $f = shift;
+	return undef unless -r $f;
+
+	local $/ = undef;
+	open(F, $f) || die "$! [$f].  Stopped ";
+	local $_ = <F>;
+	close(F);
+	$_;
+	}
+
+#
+#	writes a file, from a string
+#
+
+sub writefile($@) {
+	my $fn = shift;
+	local $_ = shift || $_;
+
+	open (FILE, "> $fn") || die "writefile(): $!. Stopped";
+	print FILE;
+	close(FILE);
+	$fn;
+	}
+	
+#	0: dev, 1: inode, the combination guarantees
+#	a unique file in a filesystem
+
+sub finode {
+	my $f = shift || $_;
+	my @i = stat $f;
+	return $i[0] . $i[1];
+	}
+
+#	simple test to determine if it's a URL
+
+sub isurl {
+	local $_ = shift || $_;
+	scalar m#(ht|f)tp://#;
+	}
+
+#	Syntax: get_url <directory> [url]
+
+sub get_url($@) {
+	my $d = shift;
+	my $url = shift || $_;
+	$d =~ s|/$||;	# no trailing /s
+
+	$info{source} = $url;
+	$url =~ s|.*/||;
+	$info{tarball} = $url;
+
+	return if -r "$d/$info{tarball}" && !$info{force};
+
+	print "-- Retrieving URL --\n";
+	my $http = new HTTP::Lite;
+	$http->request($info{source}) || die "get_url(): $!.  Stopped";
+	writefile("$d/$info{tarball}", $http->body());
+	}
+	
+# --- miscellany --------------------------------------------------------------
+
+#
+#	syntax: <scalar> = elem [nth] [regexp] [string = $_]
+#
+
+sub elem {
+	my $n = shift || 0;
+	my $re = shift || '\s+';
+	local $_ = shift || $_;
+	return (split /$re/)[$n];
+	}
+
+#
+#	attempts to return the name of the distribution.
+#	FIXME: currently only works on RedHat (as far as I know)
+#
+
+sub distro {
+	for (`cat /etc/issue`) {
+		chomp;
+		next unless $_;
+		return $_;
+		}
+	}
+
+sub changelog {
+	my @dow = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat");
+    my @mon = ("Jan", "Feb", "Mar", "Apr", "May", "Jun"
+		, "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+		);
+
+	return sprintf("%s %s %d %d %s"
+  		, $dow[(localtime)[6]]
+		, $mon[(localtime)[4]]
+		, (localtime)[3]
+		, 1900 + (localtime)[5]
+		, sprintf("%s\@%s", (getpwuid($<))[0], hostname())
+		);
+	}
+
+sub syntax {
+	my $args = shift;
+    my $warn = shift;
+
+    print "Error:\t$warn\n\n" if $warn;
+
+	local $_ = <<EOF;
+	This script automates the creation of RPMs from CPAN modules.
+	For further information please see the man page.
+EOF
+	s/^\t//mg; print;
+    print "\nSyntax: cpan2rpm [options] <module>\n\n";
+	print "Where <module> is either the name of a Perl module (e.g.\n";
+	print "Proc::Daemon) or of a tarball (e.g. Proc-Daemon-0.02.tar.gz),\n";
+	print "and [options] is any of the following:\n\n";
+    for (sort keys %$args) {
+        my ($arg, $a, $s) = split /[:=|]/;
+        $a = $arg, $arg = "" if !$a && length($arg) == 1;
+        $a = "-$a" if $a;
+        $arg = "--$arg" if $arg;
+        printf("  %-15s %s\n", $arg, $args->{$_});
+        }
+	print "\n";
+    exit(1);
+    }
+
+1;	# yipiness
+
+__END__
+
+=head1 NAME
+
+cpan2rpm - A Perl module packager
+
+=head1 SYNOPSIS
+
+cpan2rpm [options] <module>
+
+=head1 DESCRIPTION
+
+This script will generate an RPM package from a Perl module.  It uses the standard RPM file structure and creates a spec file, a source RPM, and a binary, leaving these in their respective directories.
+
+The directory structure used follows the definition rules RPM uses whereby F</usr/lib/rpm/macros> is used by default but may be overridden by macros in F</etc/rpm/macros> and F<~/.rpmmacrocs> in that order.
+
+If the <module> passed is either a CPAN module name (e.g. XML::Simple) or a URL (both http:// and ftp:// style locators will work) the script automatically downloads the given module (when CPAN module names are specified, the latest distribution is used), putting it in the SOURCES directory.  If <module> is a local filename reference (e.g. /tmp/XML-Simple-1.05.tar.gz), the tarball gets copied to the SOURCES directory.
+
+Headers in the spec will generally assume any values configured in the RPM macro files as described above.  Use of any particular option will override the internally calculated or configured values.  Whenever a header is neither configured in the RPM macro files nor is passed at the command line, the script will seek to calculate a proper value and supplies a default as stated for each option below.  It is thus typicall sufficient to provide only the <module>.
+
+The C<options> available are as follows:
+
+=over 2
+
+=item I<--pkgname=C<string-value>>
+
+The RPM package name.  This is the C<Name> header in the RPM's spec file.  Please note that the string C<perl-> will be prepended to any value passed here.  If no value is supplied, the script will use the NAME field found in the module's Makefile.PL
+
+=item I<--version=C<float-value>>
+
+The script determines the version number of the module by parsing the tarball name.
+
+=item I<--release=C<integer-value>>
+
+The package release number. Defaults to 1.
+
+=item I<--summary=C<string-value>>
+
+A one-line description of the package.  If left unspecified the script will use the module name, appending an abstract whenever available.
+
+=item I<--description=C<string-value>>
+
+This text describes the package/module.  This value is picked up from the POD in the module.  Defaults to "None.".
+
+=item I<--url=C<string-value>>
+
+The home url for the package.  Defaults to F<http://www.cpan.org>.
+
+=item I<--group=C<string-value>>
+
+This is the RPM group.  For further information on available groups please see your RPM documentation.  Defaults to C<Applications/CPAN>.
+
+=item I<--author=C<string-value>>
+
+This is the name and address of the person who authored the module.  Typically it should be in the format: I<Name <e-mail-addressE<gt>>.  If left unspecified, the script will attempt to extract it from the tarball's MakeMaker file, failing to build the package otherwise.  There is no default for this option.
+
+=item I<--packager=C<string-value>>
+
+This is you (if you're packaging someone else's module).  The string should be in the same format as for --author and defaults to: C<Arix International <cpan2rpm@arix.comE<gt>> unless the RPM macro files provide a value.
+
+=item I<--license=C<string-value>>
+
+The license header specified in the spec file.  This field is also sometimes referred to as I<Copyright>, but I<License> is a more suitable name and has become more common.  Defaults to C<Artistic>, Perl's own license.
+
+=item I<--distribution=C<string-value>>
+
+The script will use the %{distribution} tag defined in the RPM macros file.  If this tag is not set, the script will attempt to determine the distribution name by looking at the F</etc/issue> file.  If this file does not exist, the distribution will be left blank.
+
+=item I<--buildarch=C<string-value>>
+
+Allows specification of an architecture for building the RPM.  Currently defaults  to C<i386>.
+
+=item I<--buildroot=C<string-value>>
+
+Allows specifying a directory to use as a BuildRoot.  Don't mess with this is you don't know what it is.  Defaults to: C<%{_tmppath}/%{name}-%{version}>.
+
+=item I<--provides=C<string-value>>
+
+Indicates that a package should be provided by the module being built.  RPM will generate an appropriate list of provided dependencies and any passed here will be I<in addition> to those calculated.
+
+=item I<--requires=C<string-value>>
+
+Indicates packages that should be required for installation.  This option works precisely as --requires above.
+
+=item I<--no-requires=C<string-value>>
+
+Suppresses generation of a given required dependency.  Sometimes authors create dependencies on modules the packager can't find, sometimes RPM generates spurious dependencies.  This option allows the packager to arbitrarily supress a given requirement.  The value may be a comma-separated list.
+
+=item I<--spec-only>
+
+This option instructs the script to not build the RPM package but instead to oly display the generated spec file on stdout.
+
+=item I<--make-maker=C<string-value>>
+
+This option allows passing a string to the MakeMaker process (i.e. perl Makefile.PL <your-arguments-here>)
+
+=item I<--nopkgprfx>
+
+Suppresses prefixing the package name with the string C<perl->.
+
+=item I<--force>
+
+By default the script will do as little work as possible i.e. if it has alreaddy previously retrieved a module from CPAN, it will not retrieve it again.  If it has already generated a spec file it will not generate it again.  This option allows the packager to force all actions, starting from scratch.
+
+=item I<--debug[=n]>
+
+This option produces debugging output.  An optional integer increases the level of verbosity for this output.  If no integer is given, 1 is assumed.
+
+=item I<--help, -h>
+
+Displays a terse syntax message.
+
+=back
+
+=head1 NOTES
+
+This script requires that RPM be installed.  Both B<rpm> and B<rpm-build>
+must be installed on the local machine.  Please see the RPM documentation (man rpm) for further information.
+
+Additionally, the B<Perl> module will be needed :) and the CPAN module
+(which is bundled with the Perl distribution) will need to be configured.
+For further information please refer to the CPAN manpage.
+
+=head1 TODO
+
+I'm happy to work on any feature requests you may send me :) but in the meantime these are the things waiting for attention:
+
+=head1 BUGS
+
+Same goes for bugs.
+
+=head1 AUTHOR & LICENSE
+
+Written by Erick Calder <perl@arix.com>.  This utility is free and distributed under GPL, the Gnu Public License.
+
+The script was inspired by B<cpanflute> which is distributed with the rpm-build package from RedHat.  Many thanks to Robert Brown <bbb@cpan.org> for all his cool tricks, advice and patient support.
+
+=head1 AVAILABILITY
+
+The latest version may always be found at:
+
+F<http://perl.arix.com/>
+
+=head1 CHANGES
+
+$Log: cpan2rpm,v $
+Revision 1.43  2002/05/28 23:32:29  ekkis
+changed e-mail addresses
+
+Revision 1.42  2002/05/28 23:13:28  bbb
+Same as second round "1.3" but in the right place now.
+
+Revision 1.5  2002/05/23 02:55:37  ekkis
+adding "use strict" forces Makefile.PL to be eval()uated that way so had to add "no strict" to eval string.  Also added warning in case eval fails.
+
+Revision 1.4  2002/05/23 02:43:43  ekkis
+added use strict
+
+Revision 1.3  2002/05/23 02:14:04  ekkis
+oops, small patch
+
+Revision 1.2  2002/05/23 02:13:07  ekkis
+added --nopkgprfx in case we want to build RPMs without a prepended "perl-" (as in the case of cpan2rpm<g>)
+
+Revision 1.1  2002/05/22 23:47:59  ekkis
+Moved from dist to .
+
+Revision 1.40  2002/05/22 23:03:35  ekkis
+since we're no longer including the package version number in the spec filename when building multiple versions of the same package we're force to --force.  this makes no sense to the script will now _always_ build the spec file
+
+Revision 1.39  2002/05/19 01:04:44  ekkis
+still haveing problem with DBI - couldn't figure out how to eval() Makefile.PL so assuming pkgname from module (or passed)
+
+Revision 1.38  2002/05/18 22:55:00  ekkis
+- patched to allow calls like "use ExtUtils::MakeMaker qw(WriteMakefile)"... note this currently only works with () and will fail with qw//.  Due to DBI calls.
+- also changed MyExit() to die() instead since we really do need for the script to exit but without exiting us!
+- patched to allow for calls like  ExtUtils::MakeMaker::WriteMakefile() as found in DBD::mysql
+
+Revision 1.37  2002/05/07 04:21:49  ekkis
+added --make-maker parameter
+
+Revision 1.36  2002/04/23 00:29:24  ekkis
+- implemented protection of my variables from Makefile.PL being eval()d by surrounding that code with a package.  Considered the Safe module but decided against another dependency.
+
+Revision 1.35  2002/04/22 23:19:13  ekkis
+--provides and --requires weren't working
+
+Revision 1.34  2002/04/18 08:32:53  ekkis
+- put back code to generate name/e-mail addr of packager (uses hostname())
+- added END {} code to make sure we clean up.  $SIG{__DIE__} works only for die() calls
+- now picks up AUTHOR from tarball POD when possible
+- modified version parsing code to allow versions with alpha
+- redesigned tarls().  now context sensitive, much better way to determine embedded directory
+- writefile() now checks for existence
+
+Revision 1.33  2002/04/17 08:52:43  ekkis
+- some bug fixes
+- {force} implementation for get_url()
+
+Revision 1.32  2002/04/17 08:40:50  ekkis
+- added --no-requires, --find-provides, --find-requires and --install options
+- now can receive a URL to download from
+- reimplemented MyExit for eval()ing Makefile.PL
+- enhancements to writefile()
+
+Revision 1.31  2002/04/16 04:06:53  ekkis
+ripped out all dependency (provides,requires) generation code as the newer rpm-buid generates this correctly
+
+Revision 1.30  2002/04/12 17:22:35  ekkis
+- filelist is now abstracted
+- cool new method for extracting CVS version without breaking emacs
+- new regexp for splitting path/filename from given $info{module}
+
+Revision 1.29  2002/04/09 23:00:16  ekkis
+took out %define version and release as it causes recursive behaviour
+
+Revision 1.28  2002/04/09 22:20:41  ekkis
+- better relative path handling
+- now prepends url to Source: field when available via CPAN
+- BuildRoot more automated now
+
+Revision 1.27  2002/04/09 08:25:00  ekkis
+- now requires version 0.59 or greater of CPAN as previous versions are problema tic
+- implemented use of RPM macros to figure outdirectory structures.  script now p arses the various macro definition files and does recursive expansions to figure out correct values... see docs.
+- added support for a full-path tarball specification.  this allows the user to call cpan2rpm with any tarball anywhere.  The tarball will be copied to SOURCES.
+- defined %version, %release
+- added Rob Brown's perlver %defines
+- BuildRoot now defaults to the standard %{_tmpdir}
+- removed version number from spec filename
+- now scans only usr/lib in tmpdir for modules (should give better Provides headers since we don't pick up .pm files in other directories like examples/)
+- added code to figure out real module dependencies (PREREQ_PM is unreliable)
+- now attempts to read VERSION_FROM if neither ABSTRACT nor ABSTRACT_FROM is provided.  failing that it will take the module name (minus any parent info, plus appropriate extension e.g. Ping.pm from Net::Ping), and if that file exists will scan it for POD
+
+Revision 1.26  2002/04/08 22:30:35  ekkis
+now requires CPAN version 0.59 as previous versions seem broken
+added to TODO list
+
+Revision 1.25  2002/04/07 09:18:19  ekkis
+hijacked exit() for the Makefile.PL eval since certain modules exit on us (not very exciting) e.g. POE
+
+Revision 1.24  2002/04/07 02:31:00  ekkis
+fixed generation of dependencies on Perl core modules (not allowed)
+
+Revision 1.23  2002/04/07 01:15:33  ekkis
+removed dashed lines from CHANGES section... don't konw thy CVS does use this in keyword expansion!
+
+Revision 1.22  2002/04/07 01:12:24  ekkis
+added old Log info
+
+Revision 1.21  2002/04/07 01:09:01  ekkis
+tarball maker now calls system() instead of qx// so user can see prompts
+added CHANGES section
+
+revision 1.20
+date: 2002/04/07 00:06:20;  author: ekkis;  state: Exp;  lines: +4 -1
+added back author info retrieval from CPAN when possible
+
+revision 1.19
+date: 2002/04/06 23:45:25;  author: ekkis;  state: Exp;  lines: +4 -2
+added availability section to pod
+
+revision 1.18
+date: 2002/04/06 23:43:00;  author: ekkis;  state: Exp;  lines: +6 -8
+changed default for license to "Artistic" as most modules are released under Perl's own license.
+
+revision 1.17
+date: 2002/04/06 23:13:31;  author: ekkis;  state: Exp;  lines: +2 -2
+removed spaces before =head1 NAME - he cares!!
+
+revision 1.16
+date: 2002/04/06 23:03:28;  author: ekkis;  state: Exp;  lines: +2 -2
+a fix for a fix
+
+revision 1.15
+date: 2002/04/06 22:51:36;  author: ekkis;  state: Exp;  lines: +2 -2
+fixed docs
+
+revision 1.14
+date: 2002/04/06 22:47:40;  author: ekkis;  state: Exp;  lines: +33 -19
+added --debug
+added -n in calls to silence questions from Makefile.PL (may not always work)
+now makes sure /tmp/cpan2rpm exists, creates as needed
+
+revision 1.13
+date: 2002/04/06 02:34:15;  author: ekkis;  state: Exp;  lines: +18 -1
+status info
+
+revision 1.12
+date: 2002/04/06 01:57:31;  author: ekkis;  state: Exp;  lines: +8 -5
+enhancement for f2mod() to generate RPM dependencies
+
+revision 1.11
+date: 2002/04/06 01:51:22;  author: ekkis;  state: Exp;  lines: +71 -68
+various fixes
+incorporated provides() into get_meta()
+correctly generates Provides header
+
+revision 1.10
+date: 2002/04/06 00:01:15;  author: ekkis;  state: Exp;  lines: +55 -22
+added f2mod()
+enhancements to untar()
+now generates Provides headers
+
+revision 1.9
+date: 2002/04/05 22:37:05;  author: ekkis;  state: Exp;  lines: +167 -102
+major code reorg
+now uses ExtUtils::Installed for platform independent module listings
+added --provides and --spec-only
+
+revision 1.8
+date: 2002/04/05 05:29:57;  author: ekkis;  state: Exp;  lines: +2 -2
+fixed regexp for tardir
+
+revision 1.7
+date: 2002/04/05 02:07:25;  author: ekkis;  state: Exp;  lines: +33 -20
+now eval()s Makefile.PL instead of parsing it
+also looks up DESCRIPTION from module file for spec file
+
+revision 1.6
+date: 2002/04/04 03:55:27;  author: ekkis;  state: Exp;  lines: +2 -2
+fixed embedded >s in C<> tags
+
+revision 1.5
+date: 2002/04/04 03:47:34;  author: ekkis;  state: Exp;  lines: +15 -5
+added author support
+
+revision 1.4
+date: 2002/04/04 02:20:32;  author: ekkis;  state: Exp;  lines: +105 -83
+general cleanup
+now excepts core Perl modules from RPM dependencies
+now supports ABSTRACT_FROM
+improved PREREQ_PM handling (with Provides: clause)
+
+revision 1.3
+date: 2002/04/03 12:33:14;  author: ekkis;  state: Exp;  lines: +38 -18
+various bug fixes
+
+revision 1.2
+date: 2002/04/03 11:08:32;  author: ekkis;  state: Exp;  lines: +144 -142
+now retrieves metadata from tarball
+
+revision 1.1
+date: 2002/04/03 10:57:00;  author: ekkis;  state: Exp;
+branches:  1.1.1;
+Initial revision
+
+revision 1.1.1.1
+date: 2002/04/03 10:57:00;  author: ekkis;  state: Exp;  lines: +0 -0
+Initial import
+
+=cut

@@ -20,7 +20,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.025";
+$VERSION = "2.026";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -1611,10 +1611,10 @@ sub upgrade {
         }
 
     my ($f) = $url =~ m|.*/(.*)|;
-    my @ret = qx|$RPM -ta $TMPDIR/$f|;
+    my @ret = qx|$RPM -ta $TMPDIR/$f 2>&1|;
     die "upgrade(): $!" if $?;
-    /Wrote:\s+(.*)$/ && ($f = $1) && last for reverse @ret;
-    inst_rpm($f);
+    /Wrote:\s+(.*)$/ && ($info{rpm} = $1) && last for reverse @ret;
+    inst_rpm(\%info);
     exit;
     }
 
@@ -2139,6 +2139,6 @@ Copyright (c) 2002-2003 Erick Calder <ecalder@cpan.org>
 
 This product is free and distributed under the Gnu Public License (GPL).  A copy of this license was included in this distribution in a file called LICENSE.  If for some reason, this file was not included, please see F<http://www.gnu.org/licenses/> to obtain a copy of this license.
 
-$Id: cpan2rpm,v 2.279 2004/03/13 22:11:59 ekkis Exp $
+$Id: cpan2rpm,v 2.281 2004/03/14 23:12:12 ekkis Exp $
 
 =cut

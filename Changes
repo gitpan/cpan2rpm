@@ -1,7 +1,11 @@
 Revision history for cpan2rpm
 
-2.025 03/13/04 14:14:37
+2.026 03/14/04 15:17:23
+- yikes! I broke the upgrade() function in having changed the
+  interface for inst_rpm() - this patch fixes that.  Thanks to
+  Rainer Lay for pointing this out
 
+2.025 03/13/04 14:14:37
 - implemented CPAN+ support
 - renamed --cpan to --fetch to specify fetch methods
 - now supports building directories other than the current

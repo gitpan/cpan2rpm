@@ -1,7 +1,18 @@
 Revision history for cpan2rpm
 
+2.019  06/02/03 16:19:42
+- fixed broken logic with the perl.req.patch.
+  Thanks to Ian Burrell <ib@onsitetech.com> for pointing out the problem.
+- added code to properly evaluate paths found in .rpmmacros which may include
+  tags found only in the spec file e.g. %_sourcedir %{_topdir}/%{name}-%{version}.
+  Thanks to Ian Burrell for fingering this.
+- fixed broken --name which got overwritten by calculated value.  Thanks Ian!
+- Make sure the fake Makefile.PL is within the same directory as the old one.
+  File::Temp's tempfile() routine does not work (Crypt::SSLeay). [bbb]
+- various cosmetic/warn clean/doc changes
+
 2.018  2003/05/01 23:00:00
-- RPM cpan2rpm.spec compatibility workaround for borked ExtUtils::MakeMaker 6.03.
+- RPM cpan2rpm.spec compatibility workaround for borked ExtUtils::MakeMaker 6.03
 
 2.017  2003/05/01 01:00:00
 - More warn cleaning.

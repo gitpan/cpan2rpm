@@ -5,7 +5,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.018";
+$VERSION = "2.019";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -14,7 +14,7 @@ use Getopt::Long;
 use Sys::Hostname;
 use ExtUtils::MakeMaker;
 
-my ($RPM, $TMPDIR, %RPMDIR, $CWD, %info, %meta, $Temp);
+my ($RPM, $TMPDIR, %RPMDIR, $CWD, %info, %meta);
 
 my $tarRE = q/\.(tar\.(g?z|bz2)|tgz|zip)$/;
 my $docRE = '(readme|changes|todo|license|install|\.txt|\.html)';
@@ -226,10 +226,9 @@ sub init {
     else {
         my $msg = "Cannot run without File::Temp, please install ";
         $msg .= "or use the --tempdir option.";
-        eval "use File::Temp qw/tempdir tempfile/";
+        eval "use File::Temp qw/tempdir/";
         die "$@\n$msg\n" if $@;
 
-        $Temp = 1;
         $info{dist} ||= "";
         $TMPDIR = tempdir(
             CLEANUP => $info{"no-clean"} || -d $info{dist} ? 0 : 1
@@ -262,21 +261,30 @@ sub init {
     # check directory permissions
 
     my $dirserr = 0;
-    my @dirs = ($RPMDIR{SRPMS}, $RPMDIR{SPECS}, $RPMDIR{BUILD});
-    for (@dirs) {
-        next if /%/; # e.g. %_specdir = "%{name}-%{version}"
+    for my $k (keys %RPMDIR) {
+        next if $k eq "ARCH";
+        local $_ = $RPMDIR{$k};
+
+        # e.g. %_specdir = "%{name}-%{version}"
+        s/%{?name?}/$info{name}/i if $info{name};
+        s/%{?version?}/$info{version}/i if $info{version};
+        $RPMDIR{$k} = $_;
+
+        next if /%/;    # skip chking in case other tags present
         $dirserr++ unless -d && -w;
         }
 
     if ($dirserr) {
         print "RPM user environment - Your account does not have permissions ";
-        print "to the requisite RPM directory structure.  Try 'cpan2rpm --mk-rpm-dirs";
-        print "=~/redhat' to setup your environment for non-root package building.\n";
+        print "to the requisite RPM directory structure.  Try 'cpan2rpm ";
+        print "--mk-rpm-dirs=~/redhat' to setup your environment for ";
+        print "non-root package building.\n";
         exit(1);
         }
 
     # set requirements patch override
 
+    $ENV{CPAN2RPM} = 1;
     $ENV{CPAN2RPM_REQ_ALL} = $info{"req-scan-all"} || "";
 
     if ($< && $info{install}) {
@@ -354,7 +362,7 @@ sub get_meta {
 
     my $PL = readfile();
     $PL =~ s/\bexit\b/return/gs;
-    my ($x, $t) = $Temp ? tempfile() : (undef, "$TMPDIR/Makefile.$$");
+    my $t = "$info{evaldir}/Makefile.$$.PL";
     writefile($t, $PL);
 
     #   now we get the arguments passed to WriteMakefile
@@ -370,6 +378,7 @@ sub get_meta {
         goto &ExtUtils::MakeMaker::WriteMakefile;
         };
     local @ARGV = ();
+    local $0 = $t;
     push @ARGV, $info{"make-maker"} if $info{"make-maker"};
     # no input or output
     std_close();
@@ -411,7 +420,7 @@ sub get_meta {
         $info{module} =~ s/-/::/g;
         }
 
-    ($info{name} = $info{module}) =~ s/::/-/g;
+    ($info{name} = $info{module}) =~ s/::/-/g unless $info{name};
     $info{tarball} = $info{name} if -d $info{dist};
 
     die "No package name available.  Stopped"
@@ -435,7 +444,7 @@ sub get_meta {
         $meta{DESCRIPTION} =~ s/E<gt>/>/ig;
         }
 
-    $info{author} ||= $meta{AUTHOR};
+    $info{author} ||= $meta{AUTHOR} || "";
 
     if (!$info{author} && $from =~ /=head\d\s+AUTHORS?\s+(.*?)=/is) {
         local $_ = $1;
@@ -886,6 +895,8 @@ sub mk_rpm {
         push @cmd, $info{sign} if $info{sign};
         push @cmd, $info{spec};
         print join " ", ">>", @cmd, "\n" if defined $info{debug};
+        print "Signing package (pass phrase required)\n"
+            if $info{sign};
         system(@cmd);
         die "RPM build failed [$ret]" if $ret = $? >> 8;
         }
@@ -1070,7 +1081,7 @@ sub readfile {
     my $f = shift || $_;
     local $_ if defined wantarray();
 
-    return $_ = undef unless -r $f;
+    return $_ = "" unless -r $f;
 
     local $/ = undef;
     open(F, $f) || die "$! [$f].  Stopped ";
@@ -1398,6 +1409,7 @@ These represent all tags which get inserted in the package with single values.  
 =over
 
 =item B<--name=C<string-value>>
+
 This option corresponds to the I<Name> tag in the spec file.  As is customary with Perl RPMs, the string C<perl-> will be prepended to any value passed here.  If no value is supplied, the script will use the NAME field found in the module's Makefile.PL
 
 =item B<--no-prfx>
@@ -1719,6 +1731,6 @@ F<http://sourceforge.net/projects/cpan2rpm/>
 
 This utility is free and distributed under GPL, the Gnu Public License.
 
-$Id: cpan2rpm,v 2.219 2003/05/02 05:28:35 bbb Exp $
+$Id: cpan2rpm,v 2.227 2003/06/02 22:11:16 ekkis Exp $
 
 =cut

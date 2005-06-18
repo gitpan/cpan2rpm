@@ -20,7 +20,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.027";
+$VERSION = "2.028";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -83,7 +83,6 @@ sub init {
         release           => 1,
         buildroot         => "%{_tmppath}/%{name}-%{version}-%(id -u -n)",
         defattr           => "-,root,root",
-        description       => "None.",
         );
 
     my %desc = (
@@ -255,7 +254,7 @@ sub init {
     if ($info{fetch}) {
         $info{fetch} = lc($info{fetch});
         die "Invalid fetch method specified.  See man page for --fetch\nStopped"
-            unless $info{fetch} =~ /cpanplus|cpan|web/;
+            unless $cpan{ $info{fetch} };
         }
 
     $@ = "";
@@ -621,7 +620,7 @@ EOF
     #    assemble other info
 
     $info->{summary} = "$info->{name} - " . ($meta{ABSTRACT} || "Perl module");
-    $info->{description} = $meta{DESCRIPTION} if $meta{DESCRIPTION};
+    $info->{description} ||= $meta{DESCRIPTION} || "None.";
     push @{$info->{source}}, $info->{tarball}
         unless $info->{source};
     $info->{changelog} = changelog();
@@ -1172,8 +1171,9 @@ sub get_cpan_web {
     my $url;
 
     my $cache = "$RPMDIR{SOURCES}/$info->{dist}";
-    if (!$info{force} && ($url = readlink($cache))) {
+    if (!$info->{force} && ($url = readlink($cache))) {
         print "Using cached URL: $url\n";
+        push @{ $info->{source} }, $url unless $info->{source} && @{ $info->{source} };
         }
     else {
         my $base = "http://search.cpan.org";
@@ -1260,7 +1260,7 @@ sub untar($) {
 
     chomp($_ = qx/$cmd/);
     $_ = (split)[5] unless $zip;
-    $dst .= "/$1" if m|^(\S+)/|;
+    $dst .= "/$1" if m|^(\S+)/?|;
     $dst =~ s|/*$||;    # path shouldn't end in / or tardir gets wiped
     $dst =~ s|\./||;    # paths in tarballs shouldn't be relative
     return $dst;
@@ -1336,6 +1336,7 @@ sub http_get {
 
     if ($@ = "", eval "use HTTP::Request::Common; use LWP::UserAgent;", !$@) {
         my $ua = LWP::UserAgent->new();
+        $ua->env_proxy();
         return $ua->request(GET($url))->content || "";
         }
     elsif ($HTTPWARN == 0) {
@@ -1989,6 +1990,10 @@ The options below perform functions not closely related to the quotidien process
 
 One of B<cpanplus>, B<cpan> or B<web>, this parameter specifies which method to use when retrieving a module from CPAN.  Web retrievals are by parsing the CPAN website and may be faster though more error prone.  To use either the CPAN or CPAN+ modules, these must be installed.  Default: web.
 
+If your environment requires the use of a proxy, simply set the environment variable as indicated below in (bash format):
+
+F<export HTTP_PROXY=http://user:password@host.org:8080>
+
 =item B<--modules, -f =C<string-value>>
 
 Lists of modules to be processed can be stored in a file.  Pass this parameter the name of your file.  The file should contain the name of each module in a single line and the modules can be specified in any of their many forms (e.g. url, path to tarball, CPAN module name, etc.).  Comments (begining with #) will be ignore and so will empty lines.
@@ -2073,7 +2078,7 @@ At present, B<cpan2rpm> has been tested and is known to work under the following
 The script has been tested under the OS list below:
 
     - Linux RedHat: 6.1, 6.2, 7.0, 7.2, 7.3, 8.0, 9.0
-    - Linux Enterprise v3 (RHELv3)
+    - Redhat Enterprise v3 (RHELv3), AS4 (Nahant)
     - SuSE 8.1, 9.0
 
 Rumour has it it's been tested on Solaris and FreeBSD as well but I don't know for sure.  See README.redhat6 for 6.x issues to be aware of.
@@ -2157,6 +2162,6 @@ Copyright (c) 2002-2003 Erick Calder <ecalder@cpan.org>
 
 This product is free and distributed under the Gnu Public License (GPL).  A copy of this license was included in this distribution in a file called LICENSE.  If for some reason, this file was not included, please see F<http://www.gnu.org/licenses/> to obtain a copy of this license.
 
-$Id: cpan2rpm,v 2.294 2005/02/07 17:25:27 ekkis Exp $
+$Id: cpan2rpm,v 2.301 2005/06/18 05:06:54 ekkis Exp $
 
 =cut

@@ -1,5 +1,19 @@
 Revision history for cpan2rpm
 
+2.028 17/06/2005 22:09:44
+- added docs about using proxies
+- Nahant now supported
+- final slashes in main directory listing of a tarball may or may not be there.
+  thanks to Stephen More for the patch.
+- added patch to enable LWP support the various proxy environment variables.  Thanks
+  to Christophe Beauregard (chris.beauregard@ec.gc.ca>from Canada for providing
+  this one-liner
+- More general fetch method validator.
+- Allow cached URLs detected from CPAN to still auto-sniff out the author information
+  from the URL.  Ex: cpan2rpm Class::AccessorOB
+- this fixes rt.cpan.org ticket #11606 regarding a broken --description.  Thanks to
+  Bill Williams for reporting this.
+
 2.027 02/07/05 09:17:44
 - added error handling to untar()s system call.  Thanks to Paolo
   Campanella <paolo@mighty.co.za> for submitting the patch

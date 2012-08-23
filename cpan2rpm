@@ -20,7 +20,7 @@
 #
 
 use vars qw($VERSION $VX);
-$VERSION = "2.028";
+$VERSION = "2.028_02";
 
 # --- prologue ----------------------------------------------------------------
 
@@ -28,7 +28,7 @@ use strict;
 use warnings;
 use Getopt::Long;
 use Sys::Hostname;
-use Pod::Text;
+use Pod::PlainText;
 
 my ($ME, $RPM, $TMPDIR, %RPMDIR, $CWD, %info, %meta, $ARGS);
 
@@ -131,6 +131,7 @@ sub init {
         "shadow-pure"     => "override existing pure perl module",
         "no-sign"         => "prevents signing the package",
         "install|i"       => "install package when done",
+        "install-opt=s"   => "arguments for rpm install",
         "force"           => "forces all operations",
         # -- miscellaneous options
         "fetch=s"         => "fetch method for modules",
@@ -359,7 +360,7 @@ sub get_mod {
 
 sub get_meta {
     my $info = shift || $_; local $_;
-    my $pod = Pod::Text->new();
+    my $pod = Pod::PlainText->new();
 
     print "Metadata retrieval\n";
 
@@ -415,7 +416,7 @@ sub get_meta {
 
     my $PLMOD = "ExtUtils::MakeMaker";
     if ($info->{PL} =~ /^Build/) {
-        $PLMOD = "Module::Build"; 
+        $PLMOD = "Module::Build";
         # Module::Build builds itself using itself
         # but we don't have $info->{name} yet, so we use the tarball name
         unshift @INC, 'lib' if $info->{tarball} =~ /^Module-Build/;
@@ -474,6 +475,7 @@ sub get_meta {
     my $deps = $meta{PREREQ_PM};
     for (keys %$deps) {
         my $use = "use $_";
+        $use = "use" if /^perl$/ && $deps->{$_};
         $use .= " $deps->{$_}" if $deps->{$_};
 
         local $^W = 0;
@@ -1061,7 +1063,10 @@ sub inst_rpm {
     return unless $info->{install};
 
     print "Installing package\n";
-    my @cmd = (qw/rpm -Uvh/, $info->{rpm});
+    my @cmd = (qw/rpm -Uvh/);
+    push @cmd, "--force" if $info->{force};
+    if (my $o = $info->{"install-opt"}) { push @cmd, split / /,$o; }
+    push @cmd, $info->{rpm};
     unshift @cmd, "sudo" if $<;
     system(@cmd);
     return $? >> 8;
@@ -1106,7 +1111,7 @@ sub get_cpan_plus {
         );
     die "Failed fetching tarball.  Stopped"
         unless $rc->{ok};
-    
+
     $info->{tarball};
     }
 
